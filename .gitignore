@@ -1,0 +1,31 @@
+# сборка
+build/
+dist/
+*.spec.bak
+__pycache__/
+*.py[cod]
+
+# локальный тулчейн (JDK, Android SDK, Gradle, Node) — ставится скриптом
+.toolchain/
+
+# Android
+android/.gradle/
+android/local.properties
+android/keystore.jks
+android/keystore.properties
+android/app/build/
+android/app/src/main/assets/www/
+
+# временное
+.render/
+*.tmp
+*.log
+.selftest-save.json
+mathidle-selftest.txt
+.playwright/
+
+# редакторы
+.vscode/
+.idea/
+*.swp
+.DS_Store

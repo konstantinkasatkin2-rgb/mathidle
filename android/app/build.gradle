@@ -1,0 +1,61 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Подпись release-APK берётся из android/keystore.properties, если файл есть
+// (его генерирует tools/build_apk.sh). Без него release просто не соберётся,
+// а debug собирается всегда и ничего не требует.
+def keystorePropsFile = rootProject.file("keystore.properties")
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystoreProps.load(new FileInputStream(keystorePropsFile))
+}
+
+android {
+    namespace 'com.mathidle.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.mathidle.app"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    signingConfigs {
+        if (keystoreProps['storeFile']) {
+            release {
+                storeFile rootProject.file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (keystoreProps['storeFile']) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // игра целиком лежит в assets/, интернет не нужен
+    androidResources {
+        noCompress 'js'
+    }
+}
+
+dependencies { }
