@@ -8,12 +8,13 @@ import math
 import os
 import random
 import sys
+import time
 
 import pygame
 
 from . import assets, config, economy, state as state_mod
 
-W, H = config.GAME["window"]
+W, H = config.GAME["window"]      # 1280x760: базовый холст, масштабируется под окно
 FPS = 60
 
 # --------------------------------------------------------------------------
@@ -138,15 +139,19 @@ class GameUI:
     # ------------------------------------------------------------------
     # Главный цикл
     # ------------------------------------------------------------------
-    def run(self):
+    def run(self, max_seconds=None):
+        """Игровой цикл. `max_seconds` ограничивает время (используется в тестах)."""
         pygame.init()
         pygame.display.set_caption(f"{config.GAME['title']} {config.GAME['version']}")
-        window = pygame.display.set_mode(W, pygame.RESIZABLE)
+        window = pygame.display.set_mode((W, H), pygame.RESIZABLE)
         canvas = pygame.Surface((W, H))
         clock = pygame.time.Clock()
         self.state.next_problem()
+        started = time.monotonic()
 
         while self.running:
+            if max_seconds and time.monotonic() - started >= max_seconds:
+                self.running = False
             dt = min(0.1, clock.tick(FPS) / 1000.0)
             self.handle_events()
             self.state.tick(dt)
@@ -931,10 +936,16 @@ def selfcheck():
         note(abs(st.passive_rate() - 0.01) < 1e-9,
              f"пассивная скорость {economy.fmt_rate(st.passive_rate())} примера/с")
 
+        # настоящий игровой цикл: несколько секунд с окном, вводом и тиками
         game = GameUI(st)
+        game.input = "7"
+        game.press_enter()
+        note(game.input == "", "ввод ответа обработан")
         canvas = pygame.Surface((W, H))
         game.draw(canvas, pygame.display.get_surface())
         note(True, "кадр интерфейса отрисован")
+        game.run(max_seconds=1.5)
+        note(True, "игровой цикл отработал (окно, тики, ввод, сохранение)")
 
         import tempfile
         save_path = os.path.join(tempfile.gettempdir(), "mathidle-selftest-save.json")

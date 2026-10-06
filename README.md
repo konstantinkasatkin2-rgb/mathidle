@@ -64,9 +64,14 @@
 
 | | Windows | Android |
 |---|---|---|
-| Что это | pygame + PyInstaller | HTML5/JS в нативном WebView |
-| Файл | `MathIdle.exe` (2.5 МБ) | `MathIdle.apk` (98 КБ) |
-| Запуск | скачай и запусти | установи APK |
+| Что это | pygame + PyInstaller (onedir) | HTML5/JS в нативном WebView |
+| Файл | `MathIdle-windows.zip` (13 МБ) | `MathIdle.apk` (98 КБ) |
+| Запуск | распакуй архив и запусти `MathIdle.exe` | установи APK |
+
+Windows-сборка папочкой, а не одним `.exe`: onefile распаковывает DLL во временный
+каталог в `%TEMP%`, и антивирус (в том числе Defender) периодически блокирует
+свежие файлы — запуск падает с «Failed to load Python DLL». В папке распаковки
+нет, поэтому `MathIdle.exe` запускается сразу.
 
 Обе версии берут баланс из одного файла `mathidle/config.py`, который выгружается
 в `web/balance.js`. Тест `tools/parity.py` сверяет **2436 значений** — если цифры
@@ -92,9 +97,12 @@ python main.py
 
 ```bash
 bash tools/fetch_toolchain.sh      # JDK 17 + Android SDK + Gradle + Node, без прав админа
-bash tools/build_exe.sh            # dist/MathIdle.exe
+bash tools/build_exe.sh            # dist/MathIdle/ + dist/MathIdle-windows.zip
 bash tools/build_apk.sh            # dist/MathIdle.apk
 ```
+
+`build_exe.sh` сам запускает собранный `MathIdle.exe --selftest` и печатает отчёт —
+если сборка сломалась, скрипт это покажет.
 
 ## Проверки
 
@@ -108,7 +116,10 @@ bash tools/test_all.sh
 | `tools/render_test.py` | рисует экраны в PNG, ищет недостающие глифы шрифта |
 | `tools/parity.py` | сверяет Python и JS на 2436 значениях |
 | `tools/webtest.mjs` | 35 проверок HTML5-версии в jsdom (клики, клавиши, сохранения) |
-| `MathIdle.exe --selftest` | проверяет упакованный бинарник, пишет `mathidle-selftest.txt` |
+| `MathIdle.exe --selftest` | проверяет упакованный бинарник: ресурсы, ввод, игровой цикл, сохранения |
+
+Отчёт самопроверки в windowed-сборке (консоли нет) пишется в
+`mathidle-selftest.txt` рядом с `.exe`.
 
 ## Структура
 

@@ -29,3 +29,6 @@ mathidle-selftest.txt
 .idea/
 *.swp
 .DS_Store
+
+# скачанные с GitHub сборки
+downloads/
