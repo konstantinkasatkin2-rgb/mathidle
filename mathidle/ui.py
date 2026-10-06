@@ -923,7 +923,8 @@ def selfcheck():
         note(not missing, "все символы интерфейса есть в шрифте"
              + ("" if not missing else " (нет " + "".join(missing) + ")"))
 
-        st, _welcome = state_mod.GameState.load()
+        # чистый лист: проверка не должна зависеть от прошлой игры
+        st = state_mod.GameState()
         st.next_problem()
         note(st.current is not None and st.current["answer"] >= 0,
              f"пример сгенерирован: {st.current['text']} = {st.current['answer']}")
