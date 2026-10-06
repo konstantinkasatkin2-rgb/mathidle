@@ -16,13 +16,13 @@ def upgrade_cost(up, level):
     """Цена следующей покупки базового улучшения.
 
     `level` — уже купленных уровней, значит покупается n = level + 1.
-        квадратичная:  cost_start + cost_step * n * (n - 1)   (узелки, палочки)
-        линейная:      cost_start * n                        (счёты)
+    Арифметическая прогрессия: цена = a1 + (n − 1)·d
+        узелки:   0.1 + 0.2(n−1)   ->  0.1, 0.3, 0.5, ...
+        палочки:  0.3 + 0.6(n−1)   ->  0.3, 0.9, 1.5, ...
+        счёты:    0.5 + 0.5(n−1)   ->  0.5, 1.0, 1.5, ...
     """
     n = level + 1
-    if up["cost_kind"] == "linear":
-        return up["cost_start"] * n
-    return up["cost_start"] + up["cost_step"] * n * (n - 1)
+    return up["cost_start"] + up["cost_step"] * (n - 1)
 
 
 def grade_cost(item, level):

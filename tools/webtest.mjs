@@ -184,6 +184,31 @@ async function phase2() {
     JSON.parse(w.localStorage.getItem("mathidle.save")).tests_passed === 1,
     JSON.parse(w.localStorage.getItem("mathidle.save")).tests_passed);
 
+  // --- пассивный доход во время игры ---
+  const { w: pw, d: pd } = await makeGame(Object.assign({}, SAVE_BASE, {
+    money: 0,
+    base_levels: { knots: 1 },
+    saved_at: Date.now() - 1000,
+  }));
+  check("пассив капает сразу (узелки куплены)",
+    parseFloat(pd.getElementById("passiveHint").textContent.replace(",", ".")) >= 0,
+    pd.getElementById("passiveHint").textContent);
+  check("подсказка про узелки показана в панели улучшений",
+    pd.querySelector(".panel").textContent.includes("деньги пойдут сами") ||
+    pd.querySelector(".panel").textContent.includes("пассивно за сессию"),
+    pd.querySelector(".panel").textContent.slice(0, 80));
+
+  // прокручиваем игровое время: тики идут по setInterval, поэтому ждём
+  await new Promise((r) => setTimeout(r, 1200));
+  const hintText = pd.getElementById("passiveHint").textContent;
+  check("счётчик сессии появляется в верхней панели",
+    hintText.includes("за сессию"), hintText);
+  const sessionGain = parseFloat(hintText.replace(/[^0-9,.]/g, "").replace(",", ".")) || 0;
+  check("пассив реально начислил деньги за игру", sessionGain > 0, sessionGain);
+  check("деньги на экране выросли",
+    parseFloat(pd.getElementById("money").textContent.replace(",", ".")) > 0,
+    pd.getElementById("money").textContent);
+
   // --- оффлайн-доход ---
   const { d: d3 } = await makeGame(Object.assign({}, SAVE_BASE, {
     money: 0,

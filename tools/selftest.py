@@ -56,7 +56,7 @@ def test_problems():
 
 
 def test_prices():
-    print("Цены по формулам из ТЗ")
+    print("Цены: арифметическая прогрессия a1 + (n−1)·d")
     knots = config.base_upgrade("knots")
     sticks = config.base_upgrade("sticks")
     abacus = config.base_upgrade("abacus")
@@ -64,15 +64,21 @@ def test_prices():
     def costs(up):
         return [round(economy.upgrade_cost(up, lvl), 6) for lvl in range(10)]
 
+    def expected(a1, d):
+        return [round(a1 + d * (n - 1), 6) for n in range(1, 11)]
+
     k, s, a = costs(knots), costs(sticks), costs(abacus)
-    check("узелки: старт 0.1", k[0] == 0.1, k[0])
-    check("узелки: n(n-1)+0.2", [round(x, 6) for x in k] ==
-          [round(0.1 + 0.2 * n * (n - 1), 6) for n in range(1, 11)])
-    check("палочки: старт 0.3", s[0] == 0.3, s[0])
-    check("палочки: n(n-1)+0.6", [round(x, 6) for x in s] ==
-          [round(0.3 + 0.6 * n * (n - 1), 6) for n in range(1, 11)])
-    check("счёты: старт 0.5", a[0] == 0.5, a[0])
-    check("счёты: 0.5n", [round(x, 6) for x in a] == [round(0.5 * n, 6) for n in range(1, 11)])
+    check("узелки: a1 = 0.1", k[0] == 0.1, k[0])
+    check("узелки: d = 0.2", k == expected(0.1, 0.2), k)
+    check("палочки: a1 = 0.3", s[0] == 0.3, s[0])
+    check("палочки: d = 0.6", s == expected(0.3, 0.6), s)
+    check("счёты: a1 = 0.5", a[0] == 0.5, a[0])
+    check("счёты: d = 0.5", a == expected(0.5, 0.5), a)
+    # прогрессия возрастающая: каждая следующая цена ровно на d больше
+    for up, name in ((knots, "узелки"), (sticks, "палочки"), (abacus, "счёты")):
+        diffs = [round(costs(up)[i + 1] - costs(up)[i], 6) for i in range(9)]
+        check(f"{name}: шаг прогрессии постоянен = {up['cost_step']}",
+              all(abs(d - up["cost_step"]) < 1e-9 for d in diffs), diffs)
     check("макс уровней = 10", config.max_level(knots) == config.max_level(sticks)
           == config.max_level(abacus) == 10)
     check("макс скорость 0.1/0.3/0.5",
@@ -141,10 +147,29 @@ def test_flow():
     ok, _ = st.buy_grade("double_book")
     check("тетрадь куплена", ok and st.money_mult() == 1.5, st.money_mult())
 
-    # пассивный доход
+    # пассивный доход во время игры
     st.money = 0.0
+    st.session_passive = 0.0
     st.tick(1.0)
     check("пассивный доход капает", st.money > 0, st.money)
+    check("доход учтён в сессии", st.session_passive > 0, st.session_passive)
+    check("доход учтён в статистике", st.stats["passive_earned"] > 0,
+          st.stats["passive_earned"])
+    check("пассив не попадает в «earned» за решение примеров",
+          st.stats["earned"] >= 0, st.stats["earned"])
+
+    # пассив капает и пока игрок actively решает примеры
+    st2 = state.GameState(rng=random.Random(3))
+    st2.next_problem()
+    st2.base_levels["knots"] = 1
+    st2.money = 0.0
+    for _ in range(30):
+        st2.tick(0.1)                                   # 3 секунды игры
+        st2.submit(str(st2.current["answer"]))         # и активная игра
+    check("пассив капает во время активной игры", st2.session_passive > 0,
+          st2.session_passive)
+    check("сессионный счётчик меньше общего заработка",
+          st2.session_passive < st2.stats["earned"], (st2.session_passive, st2.stats["earned"]))
 
     # провал контрольной
     st.test_level = 3

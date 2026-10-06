@@ -118,6 +118,7 @@ class GameUI:
         self.rng = random.Random()
         self.bg = self._make_background()
         self._pending = []          # события, ждущие отрисовки
+        self._passive_milestone = 0  # сколько порогов пассивного дохода пройдено
 
     # ------------------------------------------------------------------
     # Фон
@@ -309,6 +310,22 @@ class GameUI:
         if self.modal and now > self.modal.get("until", 0):
             self.modal = None
         self._pending = []
+        self.check_passive_milestone()
+
+    def check_passive_milestone(self):
+        """Как только пассивный доход стал заметным — сообщаем об этом."""
+        st = self.state
+        if st.session_passive <= 0:
+            return
+        thresholds = (0.01, 0.1, 1, 10, 100, 1000)
+        passed = sum(1 for t in thresholds if st.session_passive >= t)
+        if passed > self._passive_milestone:
+            self._passive_milestone = passed
+            target = thresholds[passed - 1]
+            self.floats.append(
+                FloatingText(W * 0.22, 355, f"пассив: +{economy.fmt_money(target)}",
+                             ACCENT, ttl=1.4, born=st.now)
+            )
 
     # ------------------------------------------------------------------
     # Отрисовка
@@ -358,15 +375,17 @@ class GameUI:
 
         rate = self.state.passive_rate()
         x = 560
-        canvas.blit(label.render("ПАССИВНО", True, MUTED), (x, 10))
+        canvas.blit(label.render("ПАССИВНО КАПАЕТ", True, MUTED), (x, 10))
         per_sec = rate * self.state.passive_reward_per_example()
         canvas.blit(
             money_font.render(f"+{economy.fmt_money(per_sec)} в секунду", True, ACCENT), (x, 24)
         )
+        session = self.state.session_passive
         canvas.blit(
             small.render(
-                f"{economy.fmt_rate(rate)} примера/с · {economy.fmt_money(self.state.passive_reward_per_example())} за пример",
-                True, MUTED,
+                f"за сессию +{economy.fmt_money(session)} · "
+                f"{economy.fmt_rate(rate)} примера/с",
+                True, ACCENT if session > 0 else MUTED,
             ),
             (x, 52),
         )
@@ -575,11 +594,26 @@ class GameUI:
 
         info = self.fonts.get(13)
         rate = st.passive_rate()
+        per_sec = rate * st.passive_reward_per_example()
         line = (f"Сейчас: {economy.fmt_rate(rate)} примера/с   ·   "
-                f"{economy.fmt_money(rate * st.passive_reward_per_example())}/с   ·   "
+                f"{economy.fmt_money(per_sec)}/с   ·   "
                 f"всего {economy.fmt_rate(sum(u['max_rate'] for u in config.BASE_UPGRADES))} максимум")
         canvas.blit(info.render(line, True, MUTED), (rect.x, y))
-        y += 26
+        y += 22
+        if rate > 0:
+            canvas.blit(
+                info.render(
+                    f"Заработано пассивно за сессию: +{economy.fmt_money(st.session_passive)}",
+                    True, ACCENT,
+                ),
+                (rect.x, y),
+            )
+        else:
+            canvas.blit(
+                info.render("Купи узелки — и деньги пойдут сами", True, MUTED),
+                (rect.x, y),
+            )
+        y += 28
 
         for up in config.BASE_UPGRADES:
             level = st.upgrade_level(up["id"])
@@ -929,13 +963,19 @@ def selfcheck():
         note(st.current is not None and st.current["answer"] >= 0,
              f"пример сгенерирован: {st.current['text']} = {st.current['answer']}")
 
-        for _ in range(50):
-            st.tick(0.1)
         st.money = 25.0
         ok, message = st.buy_upgrade("knots")
         note(ok, f"покупка узелков: {message}")
         note(abs(st.passive_rate() - 0.01) < 1e-9,
              f"пассивная скорость {economy.fmt_rate(st.passive_rate())} примера/с")
+
+        # пассивный доход обязан капать во время игры, а не только оффлайн
+        st.money = 0.0
+        st.session_passive = 0.0
+        for _ in range(60):
+            st.tick(0.1)
+        note(st.session_passive > 0,
+             f"пассив капает во время игры: +{economy.fmt_money(st.session_passive)} за 6с")
 
         # настоящий игровой цикл: несколько секунд с окном, вводом и тиками
         game = GameUI(st)

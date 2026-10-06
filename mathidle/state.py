@@ -39,10 +39,13 @@ class GameState:
             "solved": 0,
             "wrong": 0,
             "earned": 0.0,
+            "passive_earned": 0.0,
             "tests_passed": 0,
             "idle_examples": 0,
             "best_streak": 0,
         }
+        # сколько пассивные примеры заработали в этой сессии (в игре и оффлайн)
+        self.session_passive = 0.0
         # текущий пример
         self.current = None
         self.shown_at = 0.0
@@ -66,8 +69,12 @@ class GameState:
         self.play_time += dt
         rate = self.passive_rate()
         if rate > 0:
-            self.credit(rate * dt * self.passive_reward_per_example(), passive=True)
+            gain = rate * dt * self.passive_reward_per_example()
+            self.credit(gain, passive=True)
             self.stats["idle_examples"] += rate * dt
+            # доход идёт и во время игры — показываем, что он капает
+            self.session_passive += gain
+            self.stats["passive_earned"] += gain
         if self.combo and self.now - self.last_correct_at > config.REWARDS["combo_decay"]:
             self.combo = 0
         self.events = [e for e in self.events if e["until"] > self.now]

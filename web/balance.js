@@ -2,7 +2,7 @@
  * Пересобрать: python tools/export_balance.py
  */
 var MATHIDLE_BALANCE = {
- "version": "1.0.0",
+ "version": "1.1.0",
  "title": "Math Idle",
  "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
  "base_upgrades": [
@@ -11,30 +11,30 @@ var MATHIDLE_BALANCE = {
    "name": "Узелки",
    "rate_per_level": 0.01,
    "max_rate": 0.1,
-   "cost_kind": "quadratic",
+   "cost_kind": "arith",
    "cost_start": 0.1,
    "cost_step": 0.2,
-   "price_formula": "0.1 + 0.2·n(n−1)"
+   "price_formula": "0.1 + 0.2(n−1)"
   },
   {
    "id": "sticks",
    "name": "Счётные палочки",
    "rate_per_level": 0.03,
    "max_rate": 0.3,
-   "cost_kind": "quadratic",
+   "cost_kind": "arith",
    "cost_start": 0.3,
    "cost_step": 0.6,
-   "price_formula": "0.3 + 0.6·n(n−1)"
+   "price_formula": "0.3 + 0.6(n−1)"
   },
   {
    "id": "abacus",
    "name": "Счёты",
    "rate_per_level": 0.05,
    "max_rate": 0.5,
-   "cost_kind": "linear",
+   "cost_kind": "arith",
    "cost_start": 0.5,
    "cost_step": 0.5,
-   "price_formula": "0.5·n"
+   "price_formula": "0.5 + 0.5(n−1)"
   }
  ],
  "operations": [
@@ -233,7 +233,7 @@ var MATHIDLE_BALANCE = {
  "game": {
   "title": "Math Idle",
   "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "window": [
    1280,
    760

@@ -74,6 +74,8 @@ def main():
     st.money = 12.0
     st.buy_upgrade("knots")
     st.buy_upgrade("sticks")
+    for _ in range(30):
+        st.tick(0.1)
     render("play", st, input_text="42", tabs=("upgrades",))
 
     st2 = state.GameState(rng=__import__("random").Random(4))

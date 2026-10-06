@@ -158,9 +158,9 @@
 
   // ------------------------------------------------------------- экономика
   function upgradeCost(up, level) {
+    // арифметическая прогрессия: a1 + (n − 1)·d
     var n = level + 1;
-    if (up.cost_kind === "linear") return up.cost_start * n;
-    return up.cost_start + up.cost_step * n * (n - 1);
+    return up.cost_start + up.cost_step * (n - 1);
   }
 
   function gradeCost(item, level) {
@@ -222,10 +222,12 @@
     testLevel: 1, testsPassed: 0,
     combo: 0, lastCorrectAt: 0,
     playTime: 0,
-    stats: { solved: 0, wrong: 0, earned: 0, tests_passed: 0, idle_examples: 0, best_streak: 0 },
+    stats: { solved: 0, wrong: 0, earned: 0, passive_earned: 0, tests_passed: 0,
+             idle_examples: 0, best_streak: 0 },
     current: null, shownAt: 0,
     test: null,
-    clock: 0, lastTick: nowSec()
+    clock: 0, lastTick: nowSec(),
+    sessionPassive: 0, passiveMilestone: 0
   };
 
   (function initState() {
@@ -277,7 +279,6 @@
     }
   }
 
-  var saveTimer = 0;
   function save() {
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
@@ -468,12 +469,28 @@
     return out;
   }
 
+  /** Как только пассивный доход стал заметным — показываем всплывашку. */
+  var PASSIVE_MILESTONES = [0.01, 0.1, 1, 10, 100, 1000];
+  function checkPassiveMilestone() {
+    var passed = 0;
+    for (var i = 0; i < PASSIVE_MILESTONES.length; i++) {
+      if (state.sessionPassive >= PASSIVE_MILESTONES[i]) passed++;
+    }
+    if (passed > state.passiveMilestone) {
+      state.passiveMilestone = passed;
+      ui.floater("пассив: +" + fmtMoney(PASSIVE_MILESTONES[passed - 1]), "var(--accent)");
+    }
+  }
+
   function wantsHint() {
     var every = hintEvery();
     return every > 0 && state.current && state.stats.solved > 0 && state.stats.solved % every === 0;
   }
 
   // ------------------------------------------------------------------- тик
+  var saveTimer = 0;
+  var repaintTimer = 0;
+
   function tick() {
     var t = nowSec();
     var dt = Math.min(0.5, Math.max(0, t - state.lastTick));
@@ -481,11 +498,15 @@
     state.clock += dt;
     state.playTime += dt;
 
+    // пассивный доход идёт и во время игры
     var rate = passiveRate();
     if (rate > 0) {
       var gain = rate * dt * passiveReward(topOperation());
       state.money += gain;
       state.stats.idle_examples += rate * dt;
+      state.sessionPassive += gain;
+      state.stats.passive_earned += gain;
+      checkPassiveMilestone();
     }
     if (state.combo && state.clock - state.lastCorrectAt > R.combo_decay) state.combo = 0;
     if (state.test) {
@@ -499,6 +520,11 @@
 
     saveTimer += dt;
     if (saveTimer >= B.game.autosave_seconds) { saveTimer = 0; save(); }
+
+    // перерисовываем верхнюю панель, чтобы деньги и счётчик пассива
+    // обновлялись сами, без кликов игрока
+    repaintTimer += dt;
+    if (repaintTimer >= 0.25) { repaintTimer = 0; ui.renderLive(); }
   }
 
   // --------------------------------------------------------------------- UI
@@ -564,7 +590,9 @@
       var rate = passiveRate();
       el.money.textContent = fmtMoney(state.money);
       el.passive.textContent = "+" + fmtMoney(rate * passiveReward(topOperation())) + "/с";
-      el.passiveHint.textContent = fmtRate(rate) + " примера/с";
+      el.passiveHint.textContent = state.sessionPassive > 0
+        ? "за сессию +" + fmtMoney(state.sessionPassive) + " · " + fmtRate(rate) + " примера/с"
+        : fmtRate(rate) + " примера/с";
       el.mult.textContent = "×" + moneyMult().toFixed(1);
       el.combo.textContent = state.combo > 1 ? "серия " + state.combo : "";
     }
@@ -617,8 +645,12 @@
 
     function panelUpgrades() {
       var rate = passiveRate();
-      var out = '<div class="small" style="margin-bottom:8px">Сейчас: ' + fmtRate(rate) +
+      var out = '<div class="small" style="margin-bottom:4px">Сейчас: ' + fmtRate(rate) +
         " примера/с · " + fmtMoney(rate * passiveReward(topOperation())) + "/с</div>";
+      out += state.sessionPassive > 0
+        ? '<div class="small accent" style="margin-bottom:8px">Заработано пассивно за сессию: +' +
+          fmtMoney(state.sessionPassive) + "</div>"
+        : '<div class="small" style="margin-bottom:8px">Купи узелки — и деньги пойдут сами</div>';
       for (var i = 0; i < B.base_upgrades.length; i++) {
         var up = B.base_upgrades[i];
         var level = state.base[up.id] || 0;
@@ -853,8 +885,15 @@
       renderLog();
     }
 
+    /** Быстрое обновление без перерисовки панелей — для пассивного дохода. */
+    function renderLive() {
+      renderTop();
+      renderLog();
+    }
+
     return {
-      init: init, log: log, renderAll: renderAll, showModal: showModal, flash: flash,
+      init: init, log: log, renderAll: renderAll, renderLive: renderLive,
+      showModal: showModal, flash: flash,
       inputValue: function () { return input; }
     };
   })();

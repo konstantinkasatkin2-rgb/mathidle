@@ -11,9 +11,11 @@
 # Базовые улучшения (основной магазин)
 #
 # Цена n-й покупки (n = 1, 2, 3, ...) по ТЗ:
-#   «Узелки»            n = n(n-1) + 0.2  -> 0.1 + 0.2*n*(n-1)
-#   «Счётные палочки»   n = n(n-1) + 0.6  -> 0.3 + 0.6*n*(n-1)
-#   «Счёты»             An = 0.5(n-1) + 1 -> 0.5*n  (линейно от 0.5)
+# Цена n-й покупки (n = 1, 2, 3, ...) — арифметическая прогрессия:
+#     цена = a1 + (n − 1)·d
+#   «Узелки»            a1 = 0.1, d = 0.2   ->  0.1, 0.3, 0.5, ... 1.9
+#   «Счётные палочки»   a1 = 0.3, d = 0.6   ->  0.3, 0.9, 1.5, ... 5.7
+#   «Счёты»             a1 = 0.5, d = 0.5   ->  0.5, 1.0, 1.5, ... 5.0
 # В скобках — максимальная суммарная скорость в примерах/сек.
 # --------------------------------------------------------------------------
 BASE_UPGRADES = [
@@ -22,30 +24,30 @@ BASE_UPGRADES = [
         "name": "Узелки",
         "rate_per_level": 0.01,
         "max_rate": 0.1,
-        "cost_kind": "quadratic",
+        "cost_kind": "arith",
         "cost_start": 0.1,
         "cost_step": 0.2,
-        "price_formula": "0.1 + 0.2·n(n−1)",
+        "price_formula": "0.1 + 0.2(n−1)",
     },
     {
         "id": "sticks",
         "name": "Счётные палочки",
         "rate_per_level": 0.03,
         "max_rate": 0.3,
-        "cost_kind": "quadratic",
+        "cost_kind": "arith",
         "cost_start": 0.3,
         "cost_step": 0.6,
-        "price_formula": "0.3 + 0.6·n(n−1)",
+        "price_formula": "0.3 + 0.6(n−1)",
     },
     {
         "id": "abacus",
         "name": "Счёты",
         "rate_per_level": 0.05,
         "max_rate": 0.5,
-        "cost_kind": "linear",
+        "cost_kind": "arith",
         "cost_start": 0.5,
         "cost_step": 0.5,
-        "price_formula": "0.5·n",
+        "price_formula": "0.5 + 0.5(n−1)",
     },
 ]
 
@@ -274,7 +276,7 @@ OFFLINE = {
 GAME = {
     "title": "Math Idle",
     "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "window": [1280, 760],
     "autosave_seconds": 5.0,
     "font": "assets/fonts/Roboto-Regular.ttf",
