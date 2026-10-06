@@ -8,7 +8,9 @@
 [![Android](https://img.shields.io/badge/android-APK-3DDC84)](android/)
 [![Лицензия](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Скачать: **[MathIdle.exe](https://github.com/konstantinkasatkin2-rgb/mathidle/releases)** (Windows) · **[MathIdle.apk](https://github.com/konstantinkasatkin2-rgb/mathidle/releases)** (Android)
+Скачать: **[MathIdle-windows.zip](https://github.com/konstantinkasatkin2-rgb/mathidle/releases)** (Windows) · **[MathIdle.apk](https://github.com/konstantinkasatkin2-rgb/mathidle/releases)** (Android)
+
+Играть прямо в браузере: **[konstantinkasatkin2-rgb.github.io/mathidle](https://konstantinkasatkin2-rgb.github.io/mathidle/)**
 
 </div>
 
@@ -22,6 +24,24 @@
 более широкое окно скорости и новые математические действия.
 
 ## Как играть
+
+Играть можно в браузере, на Windows или на Android:
+
+**🌐 В браузере** — [konstantinkasatkin2-rgb.github.io/mathidle](https://konstantinkasatkin2-rgb.github.io/mathidle/)
+Работает на компьютере и на телефоне, ничего устанавливать не нужно.
+
+**💾 Локально** — `bash tools/serve_web.sh`, затем открой <http://localhost:8765>.
+Просто открыть `web/index.html` двойным щелчком нельзя: по `file://` браузер
+не даёт доступ к `localStorage`, и прогресс не сохраняется.
+
+**🖥 Windows** — `MathIdle.exe` из архива релиза.
+
+**📱 Android** — `MathIdle.apk` из архива релиза.
+
+Прогресс сохраняется отдельно в каждой версии, своими настройками и своим
+`localStorage` — переносить его между ними не нужно.
+
+### Управление и что делать
 
 | Действие | Что делать |
 |---|---|

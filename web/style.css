@@ -33,7 +33,11 @@ html, body {
   min-height: 100%;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%);
+  /* solid fallback first: на телефоне при «резиновой» прокрутке не должно
+     просвечивать белый фон, если градиент не отрисовался */
+  background-color: var(--bg);
+  background-image: linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%);
+  background-attachment: fixed;
 }
 
 /* ---------------- верхняя панель ---------------- */
