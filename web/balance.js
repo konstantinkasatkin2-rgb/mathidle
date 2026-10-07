@@ -2,7 +2,7 @@
  * Пересобрать: python tools/export_balance.py
  */
 var MATHIDLE_BALANCE = {
- "version": "1.2.1",
+ "version": "1.2.2",
  "title": "Math Idle",
  "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
  "base_upgrades": [
@@ -426,12 +426,13 @@ var MATHIDLE_BALANCE = {
    8000
   ],
   "autosync_seconds": 20.0,
-  "session_token_days": 30
+  "session_token_days": 30,
+  "https_required_hint": "Сайт открыт по HTTPS — сервер аккаунтов тоже должен быть по HTTPS. Запустите его с ключом: bash tools/serve_accounts.sh --https"
  },
  "game": {
   "title": "Math Idle",
   "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "window": [
    1280,
    760

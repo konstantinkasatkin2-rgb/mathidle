@@ -324,13 +324,38 @@ def main():
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--db", default=DB_PATH)
+    parser.add_argument("--https", action="store_true",
+                        help="поднять по HTTPS (нужно, если игра открыта по HTTPS)")
+    parser.add_argument("--cert", default=None, help="файл сертификата .pem")
+    parser.add_argument("--key", default=None, help="файл ключа .pem")
     args = parser.parse_args()
 
     DB_PATH = args.db
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"Сервер аккаунтов Math Idle: http://{args.host}:{args.port}")
+    scheme = "http"
+    if args.https:
+        cert = args.cert or os.path.join(HERE, "cert.pem")
+        key = args.key or os.path.join(HERE, "key.pem")
+        if not (os.path.exists(cert) and os.path.exists(key)):
+            print(f"Нет сертификата: {cert} / {key}")
+            print("Создать (команда openssl):")
+            print('  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \\')
+            print(f'    -keyout "{key}" -out "{cert}" -subj "/CN=localhost"')
+            print("Либо запустите tools/make_cert.sh")
+            server.server_close()
+            return 1
+        import ssl
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile=cert, keyfile=key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        scheme = "https"
+
+    print(f"Сервер аккаунтов Math Idle: {scheme}://{args.host}:{args.port}")
     print(f"База: {DB_PATH}")
+    if scheme == "https" and args.host in ("127.0.0.1", "localhost"):
+        print("ВНИМАНИЕ: сертификат самоподписанный для localhost. Браузер спросит")
+        print("подтверждение — нажмите «Всё равно перейти», иначе запрос не пройдёт.")
     print("Остановить: Ctrl+C")
     try:
         server.serve_forever()

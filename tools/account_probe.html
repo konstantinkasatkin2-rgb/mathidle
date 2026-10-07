@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Math Idle — проверка аккаунтов</title>
+<style>
+  body { background:#0d111a; color:#e8edf5; font: 13px/1.6 system-ui, sans-serif; margin: 0; padding: 16px; }
+  #out { font: 12px/1.7 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
+  .ok { color:#48bb78; }
+  .bad { color:#f56565; }
+</style>
+</head>
+<body>
+<h1>Math Idle — регистрация, вход и сообщения об ошибках</h1>
+<pre id="out">загрузка…</pre>
+
+<script>
+// Проверяет, что игрок получает внятные сообщения, а не технические
+// «Failed to fetch». Страницу открывает tools/account_check.sh, она же
+// подставляет порт сервера и сценарий.
+//
+//   ?port=8766&mode=up     сервер запущен: регистрация, вход, ошибки сервера
+//   ?port=9999&mode=down   сервер не запущен: понятное объяснение
+var params = new URLSearchParams(location.search);
+var PORT = params.get("port") || "8766";
+var MODE = params.get("mode") || "up";
+var URL_ = "http://127.0.0.1:" + PORT;
+var USER = "igrok-" + Date.now().toString().slice(-6);
+
+var out = document.getElementById("out");
+var failures = 0;
+
+function log(text, ok) {
+  if (ok === false) failures++;
+  out.textContent += (ok === false ? "  FAIL " : ok === true ? "  ok   " : "  ..   ") + text + "\n";
+}
+
+function frameReady(url) {
+  return new Promise(function (res) {
+    var f = document.createElement("iframe");
+    f.width = 900; f.height = 700; f.src = url;
+    f.onload = function () { setTimeout(function () { res(f); }, 800); };
+    document.body.appendChild(f);
+  });
+}
+
+/* Ждём либо сообщение об ошибке, либо кнопку «Выйти». */
+function waitFor(d, ms) {
+  return new Promise(function (res) {
+    var t0 = Date.now();
+    (function tick() {
+      var w = d.querySelector(".warn");
+      if (w) return res(w.textContent);
+      if (d.querySelector("[data-signout]")) return res("ВЫХОД ВЫПОЛНЕН");
+      if (Date.now() - t0 > ms) return res("ТАЙМАУТ");
+      setTimeout(tick, 120);
+    })();
+  });
+}
+
+function pause(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+(async function () {
+  var frame = await frameReady("../web/index.html");
+  var d = frame.contentDocument;
+  d.querySelector('[data-tab="settings"]').click();
+  await pause(300);
+
+  function fill(name, pass) {
+    d.getElementById("serverUrl").value = URL_;
+    d.getElementById("loginName").value = name;
+    d.getElementById("loginPass").value = pass;
+  }
+  function click(sel) {
+    // убираем прошлое сообщение, иначе ждём не тот ответ
+    d.querySelectorAll(".warn").forEach(function (n) { n.remove(); });
+    d.querySelector(sel).click();
+  }
+  function signOut() {
+    if (d.querySelector("[data-signout]")) click("[data-signout]");
+    return pause(300);
+  }
+
+  // 1. регистрация
+  fill(USER, "parol123");
+  click("[data-register]");
+  var e1 = await waitFor(d, 15000);
+  if (MODE === "down") {
+    // сервера нет — регистрация обязана не пройти, и это правильно
+    var clear = /сервер не отвечает/i.test(e1) && !/failed to fetch/i.test(e1);
+    log("сервер недоступен — сообщение понятное: " + clear, clear);
+    log("игрок не попал в аккаунт: " + !/ВЫХОД ВЫПОЛНЕН/.test(e1),
+      !/ВЫХОД ВЫПОЛНЕН/.test(e1));
+    out.className = failures ? "bad" : "ok";
+    document.title = failures ? "ACCOUNT-FAIL" : "ACCOUNT-OK";
+    return;
+  }
+  log("регистрация нового игрока: " + e1, /ВЫХОД ВЫПОЛНЕН/.test(e1));
+
+  await signOut();
+  // 2. неверный пароль
+  fill(USER, "nepravilny");
+  click("[data-login]");
+  var e2 = await waitFor(d, 12000);
+  log("неверный пароль: " + e2, /неверн/i.test(e2));
+
+  // 3. верный пароль
+  fill(USER, "parol123");
+  click("[data-login]");
+  var e3 = await waitFor(d, 12000);
+  log("верный пароль: " + e3, /ВЫХОД ВЫПОЛНЕН/.test(e3));
+
+  await signOut();
+  // 4. занятое имя
+  fill(USER, "parol123");
+  click("[data-register]");
+  var e4 = await waitFor(d, 12000);
+  log("занятое имя: " + e4, /занят/i.test(e4));
+
+  await signOut();
+  // 5. короткий пароль
+  fill("novy-" + USER, "123");
+  click("[data-register]");
+  var e5 = await waitFor(d, 12000);
+  log("короткий пароль: " + e5, /минимум|парол/i.test(e5));
+
+  // 6. адрес сервера пережил перезагрузку
+  var again = await frameReady("../web/index.html");
+  var d2 = again.contentDocument;
+  d2.querySelector('[data-tab="settings"]').click();
+  await pause(300);
+  var saved = d2.getElementById("serverUrl");
+  log("адрес сервера сохранён: " + (saved && saved.value === URL_),
+    !!saved && saved.value === URL_);
+
+  var raw = /failed to fetch/i.test(out.textContent);
+  log("техническое «Failed to fetch» не показывается игроку: " + !raw, !raw);
+
+  out.className = failures ? "bad" : "ok";
+  document.title = failures ? "ACCOUNT-FAIL" : "ACCOUNT-OK";
+})();
+</script>
+</body>
+</html>

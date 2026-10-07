@@ -24,6 +24,16 @@ android/app/src/main/assets/www/
 mathidle-selftest.txt
 .playwright/
 
+# база сервера аккаунтов: там хэши паролей игроков, в репозиторий нельзя
+server/mathidle.db
+server/mathidle.db-shm
+server/mathidle.db-wal
+
+# сертификаты и временные файлы проверок
+server/cert.pem
+server/key.pem
+tools/.mixedtmp/
+
 # редакторы
 .vscode/
 .idea/

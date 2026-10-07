@@ -499,7 +499,7 @@ OFFLINE = {
 GAME = {
     "title": "Math Idle",
     "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "window": [1280, 760],
     "autosave_seconds": 5.0,
     "font": "assets/fonts/Roboto-Regular.ttf",
@@ -570,4 +570,9 @@ ACCOUNT = {
     "fallback_ports": [8766, 8000],
     "autosync_seconds": 20.0,
     "session_token_days": 30,
+    # HTTPS-страница (например, сайт на GitHub) не может ходить на HTTP:
+    # браузер блокирует такой запрос и fetch падает с «Failed to fetch».
+    # В этом случае сервер нужен по HTTPS, см. tools/serve_accounts.sh --https
+    "https_required_hint": "Сайт открыт по HTTPS — сервер аккаунтов тоже должен быть по HTTPS. "
+                           "Запустите его с ключом: bash tools/serve_accounts.sh --https",
 }

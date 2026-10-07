@@ -74,6 +74,20 @@ function measure(win, name) {
   report(top.right <= win.innerWidth + 1.5,
     "верхняя панель помещается (" + top.right.toFixed(0) + ")");
 
+  // 5a. деньги не обрезаны даже в худшем случае.
+  // Самая длинная строка, какую может выдать форматирование: «999.99e−12».
+  var moneyEl = doc.getElementById("money");
+  if (moneyEl) {
+    var keep = moneyEl.textContent;
+    moneyEl.textContent = "999.99e−12";
+    var moneyFits = moneyEl.scrollWidth <= moneyEl.clientWidth + 1;
+    var moneyBox = moneyEl.getBoundingClientRect();
+    moneyEl.textContent = keep;
+    report(moneyFits && moneyBox.width > 0,
+      "деньги не обрезаны на худшем случае (" + moneyEl.scrollWidth +
+      " ≤ " + moneyEl.clientWidth + ")");
+  }
+
   // 6–7. игровой экран (проверяем, только если он открыт)
   var playShown = win.getComputedStyle(play).display !== "none";
   if (playShown) {
