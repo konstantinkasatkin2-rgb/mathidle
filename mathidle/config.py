@@ -502,7 +502,7 @@ OFFLINE = {
 GAME = {
     "title": "Math Idle",
     "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
-    "version": "1.2.5",
+    "version": "1.2.6",
     "window": [1280, 760],
     "autosave_seconds": 5.0,
     "font": "assets/fonts/Roboto-Regular.ttf",

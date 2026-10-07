@@ -21,6 +21,9 @@ import android.webkit.WebViewClient;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.DatagramPacket;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 import java.net.DatagramSocket;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
@@ -52,6 +55,20 @@ public class MainActivity extends Activity {
 
     private static final String HOST = "appassets.mathidle.local";
     private static final String START_URL = "http://" + HOST + "/index.html";
+
+    /**
+     * Сохранения живут в localStorage, а он привязан к origin вместе со
+     * схемой. В версиях 1.2.0–1.2.3 игра открывалась по https, а начиная
+     * с 1.2.4 — по http (иначе браузер блокирует запрос к серверу
+     * аккаунтов на http). Для игрока это выглядело как «прогресс сбросился»:
+     * телефон просто смотрел в другое хранилище, а старые данные лежали
+     * нетронутыми. Поэтому один раз переносим сохранение со старого адреса
+     * на новый.
+     */
+    private static final String LEGACY_START_URL = "https://" + HOST + "/index.html";
+    private static final String SAVE_KEY = "mathidle.save";
+    private static final String PREF_MIGRATED = "migrated_https_save";
+
     private static final String ASSET_ROOT = "www";
     private static final int DISCOVERY_PORT = 8766;
     private static final String DISCOVERY_TOKEN = "mathidle";
@@ -70,6 +87,8 @@ public class MainActivity extends Activity {
     }
 
     private WebView web;
+    private String legacySave;                 // сохранение со старого origin
+    private boolean mergePending;            // ждём загрузки игры для переноса
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -95,6 +114,15 @@ public class MainActivity extends Activity {
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 return serveAsset(request.getUrl());
             }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                // Страница загрузилась — можно переносить сохранение.
+                if (mergePending) {
+                    mergePending = false;
+                    mergeLegacySave();
+                }
+            }
         });
         web.addJavascriptInterface(new NativeBridge(), "MathIdleNative");
 
@@ -105,7 +133,131 @@ public class MainActivity extends Activity {
 
         setContentView(web);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        web.loadUrl(START_URL);
+        loadGame();
+    }
+
+    private void loadGame() {
+        if (alreadyMigrated()) {
+            web.loadUrl(START_URL);
+            return;
+        }
+        // Сначала читаем сохранение со старого адреса, потом открываем игру:
+        // перенос должен случиться до того, как игра успеет загрузить данные.
+        readLegacySave(new Runnable() {
+            @Override
+            public void run() {
+                web.loadUrl(START_URL);
+            }
+        });
+    }
+
+    private boolean alreadyMigrated() {
+        return getSharedPreferences("mathidle", MODE_PRIVATE).getBoolean(PREF_MIGRATED, false);
+    }
+
+    private void rememberMigrated() {
+        getSharedPreferences("mathidle", MODE_PRIVATE)
+                .edit().putBoolean(PREF_MIGRATED, true).apply();
+    }
+
+    /**
+     * Читает сохранение из старого origin (https) во временном WebView.
+     * Сам WebView в окно не добавляется и сразу уничтожается.
+     */
+    private void readLegacySave(final Runnable then) {
+        final WebView tmp = new WebView(this);
+        tmp.getSettings().setJavaScriptEnabled(true);
+        tmp.getSettings().setDomStorageEnabled(true);
+        tmp.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                view.evaluateJavascript(
+                        "localStorage.getItem('" + SAVE_KEY + "')", value -> {
+                            legacySave = fromJsString(value);
+                            view.destroy();
+                            if (legacySave != null) {
+                                // перенос запустится, когда игра догрузится
+                                mergePending = true;
+                            }
+                            then.run();
+                        });
+            }
+        });
+        tmp.loadUrl(LEGACY_START_URL);
+    }
+
+    /**
+     * Переносит сохранение, если оно «дальше» нынешнего: игрок мог успеть
+     * поиграть и в 1.2.3, и в 1.2.4–1.2.5, и обе игрыны сохранения важны.
+     * Сначала пишем новое, только потом стираем старое — чтобы обрыв на
+     * середине не привёл к потере данных.
+     */
+    private void mergeLegacySave() {
+        if (legacySave == null) {
+            rememberMigrated();
+            return;
+        }
+        web.evaluateJavascript("localStorage.getItem('" + SAVE_KEY + "')", value -> {
+            String current = fromJsString(value);
+            if (progress(current) >= progress(legacySave)) {
+                rememberMigrated();
+                forgetLegacySave();
+                return;
+            }
+            web.evaluateJavascript(
+                    "localStorage.setItem('" + SAVE_KEY + "'," + JSONObject.quote(legacySave) + ")",
+                    written -> {
+                        rememberMigrated();
+                        forgetLegacySave();
+                        web.postDelayed(web::reload, 150);
+                    });
+        });
+    }
+
+    /** Стирает перенесённое сохранение по старому адресу, чтобы не трогать снова. */
+    private void forgetLegacySave() {
+        final WebView tmp = new WebView(this);
+        tmp.getSettings().setJavaScriptEnabled(true);
+        tmp.getSettings().setDomStorageEnabled(true);
+        tmp.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                view.evaluateJavascript("localStorage.removeItem('" + SAVE_KEY + "')",
+                        value -> view.destroy());
+            }
+        });
+        tmp.loadUrl(LEGACY_START_URL);
+    }
+
+    /** Распаковывает значение, пришедшее из evaluateJavascript. */
+    private static String fromJsString(String value) {
+        if (value == null || value.equals("null")) {
+            return null;
+        }
+        try {
+            return new JSONArray("[" + value + "]").optString(0, null);
+        } catch (JSONException err) {
+            return null;
+        }
+    }
+
+    /**
+     * Насколько далеко продвинулось сохранение. Сравниваем по числу решённых
+     * примеров: оно только растёт и не зависит от того, много ли сейчас денег.
+     */
+    private static double progress(String saveJson) {
+        if (saveJson == null) {
+            return -1;
+        }
+        try {
+            JSONObject save = new JSONObject(saveJson);
+            JSONObject stats = save.optJSONObject("stats");
+            double solved = stats == null ? 0 : stats.optDouble("solved", 0);
+            double earned = stats == null ? 0 : stats.optDouble("earned", 0);
+            return solved + earned / 1e9;    // деньги лишь различают равные по примерам
+        } catch (JSONException err) {
+            return -1;
+        }
     }
 
     // ------------------------------------------------------------------
