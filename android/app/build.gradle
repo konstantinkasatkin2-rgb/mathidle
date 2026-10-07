@@ -19,8 +19,9 @@ android {
         applicationId "com.mathidle.app"
         minSdk 21
         targetSdk 34
-        versionCode 1
-        versionName "1.0.0"
+        // держим в согласии с версией игры из mathidle/config.py
+        versionCode 124
+        versionName "1.2.4"
     }
 
     signingConfigs {

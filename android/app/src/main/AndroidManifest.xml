@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- игра полностью офлайн: разрешений не требуется -->
+    <!-- Игра работает без сети. Но аккаунты (прогресс на своём компьютере)
+         требуют связи с сервером, запущенным дома, поэтому разрешение
+         INTERNET нужно: без него любой запрос просто не уходит. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <application
         android:allowBackup="true"
@@ -10,6 +15,7 @@
         android:label="@string/app_name"
         android:supportsRtl="false"
         android:hardwareAccelerated="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/AppTheme">
 
         <activity

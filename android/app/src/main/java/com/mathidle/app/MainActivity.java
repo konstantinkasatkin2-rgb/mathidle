@@ -2,12 +2,16 @@ package com.mathidle.app;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Context;
 import android.net.Uri;
-import android.os.Build;
+import android.net.wifi.WifiManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -16,23 +20,41 @@ import android.webkit.WebViewClient;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.SocketTimeoutException;
+import java.net.URL;
+import java.net.UnknownHostException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
 
 /**
  * Тонкая нативная обёртка над HTML5-игрой (assets/www).
  *
  * Игра отдаётся не через file://, а через свой домен appassets.mathidle.local,
- * который отдаёт WebViewClient. Так у страницы нормальный https-origin —
- * иначе в Chromium WebView localStorage (сохранения игры) может не работать.
+ * который отдаёт WebViewClient. Так у страницы нормальный origin — иначе в
+ * Chromium WebView localStorage (сохранения игры) может не работать.
+ *
+ * Домен именно http://, а не https://. Страница на https не может обратиться
+ * к серверу аккаунтов на http: браузер блокирует такой запрос, и игра
+ * показывает «Failed to fetch». А сервер аккаунтов запускается дома, по
+ * обычному http, — поэтому и страница должна быть без https. Раньше здесь
+ * стоял https, и регистрация в приложении не работала вообще.
  *
  * Зависимостей нет вообще (без AndroidX), поэтому APK весит меньше 100 КБ.
  */
 public class MainActivity extends Activity {
 
     private static final String HOST = "appassets.mathidle.local";
-    private static final String START_URL = "https://" + HOST + "/index.html";
+    private static final String START_URL = "http://" + HOST + "/index.html";
     private static final String ASSET_ROOT = "www";
+    private static final int DISCOVERY_PORT = 8766;
+    private static final String DISCOVERY_TOKEN = "mathidle";
 
     private static final Map<String, String> MIME = new HashMap<>();
 
@@ -48,6 +70,7 @@ public class MainActivity extends Activity {
     }
 
     private WebView web;
+    private final Handler ui = new Handler(Looper.getMainLooper());
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -64,6 +87,8 @@ public class MainActivity extends Activity {
         settings.setBuiltInZoomControls(false);
         settings.setTextZoom(100);                // системный размер шрифта не ломает вёрстку
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
+        // на случай, если где-то внутри останется https-ссылка
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
 
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -71,6 +96,7 @@ public class MainActivity extends Activity {
                 return serveAsset(request.getUrl());
             }
         });
+        web.addJavascriptInterface(new NativeBridge(), "MathIdleNative");
 
         web.setBackgroundColor(0xFF101420);
         web.setOverScrollMode(View.OVER_SCROLL_NEVER);
@@ -80,6 +106,185 @@ public class MainActivity extends Activity {
         setContentView(web);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         web.loadUrl(START_URL);
+    }
+
+    // ------------------------------------------------------------------
+    // Мост к игре: поиск сервера аккаунтов в локальной сети
+    // ------------------------------------------------------------------
+    /**
+     * Игра зовёт MathIdleNative.findServers(), получает список адресов и
+     * пробует их сама. Сделано нативно по двум причинам: из JavaScript
+     * нельзя отправить UDP-пакет, а обычный fetch не проходит мимо CORS
+     * и запрета на небезопасные подключения.
+     */
+    private class NativeBridge {
+
+        @JavascriptInterface
+        public void findServers() {
+            Executors.newSingleThreadExecutor().execute(new Runnable() {
+                @Override
+                public void run() {
+                    final List<String> found = new ArrayList<>();
+                    for (String url : discover()) {
+                        if (!found.contains(url)) {
+                            found.add(url);
+                        }
+                    }
+                    final String json = toJson(found);
+                    ui.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (web == null) {
+                                return;
+                            }
+                            web.evaluateJavascript(
+                                    "window.MathIdleNativeServers && "
+                                            + "window.MathIdleNativeServers(" + json + ")", null);
+                        }
+                    });
+                }
+            });
+        }
+    }
+
+    private String toJson(List<String> items) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < items.size(); i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append('"').append(items.get(i).replace("\\", "\\\\").replace("\"", "\\\"")).append('"');
+        }
+        return sb.append(']').toString();
+    }
+
+    /** Ищем сервер: спросим по UDP, а если не вышло — переберём адреса сети. */
+    private List<String> discover() {
+        List<String> urls = new ArrayList<>();
+        urls.addAll(byBroadcast());
+        if (urls.isEmpty()) {
+            urls.addAll(byProbing());
+        }
+        return urls;
+    }
+
+    /**
+     * UDP-«пинг»: телефон спрашивает «есть ли тут сервер?» — так делают все
+     * приложения для поиска принтеров и колонок в сети. Отвечает сервер
+     * аккаунтов, запущенный на компьютере.
+     */
+    private List<String> byBroadcast() {
+        List<String> urls = new ArrayList<>();
+        DatagramSocket socket = null;
+        try {
+            socket = new DatagramSocket();
+            socket.setBroadcast(true);
+            socket.setSoTimeout(1200);
+            byte[] ping = DISCOVERY_TOKEN.getBytes("UTF-8");
+            for (String broadcast : broadcastAddresses()) {
+                socket.send(new DatagramPacket(ping, ping.length,
+                        InetAddress.getByName(broadcast), DISCOVERY_PORT));
+            }
+            long until = System.currentTimeMillis() + 1500;
+            byte[] buffer = new byte[512];
+            while (System.currentTimeMillis() < until) {
+                DatagramPacket reply = new DatagramPacket(buffer, buffer.length);
+                socket.receive(reply);
+                String text = new String(reply.getData(), 0, reply.getLength(), "UTF-8");
+                if (text.contains(DISCOVERY_TOKEN)) {
+                    urls.add("http://" + reply.getAddress().getHostAddress() + ":" + DISCOVERY_PORT);
+                }
+            }
+        } catch (Exception ignored) {
+            // сеть может быть без широковещания — это не ошибка
+        } finally {
+            if (socket != null) {
+                socket.close();
+            }
+        }
+        return urls;
+    }
+
+    /**
+     * Запасной путь: узнаём свою подсеть и спрашиваем сервер по HTTP
+     * несколько адресов подряд. Отвечает только наш сервер — он отдаёт
+     * заголовок X-MathIdle.
+     */
+    private List<String> byProbing() {
+        List<String> urls = new ArrayList<>();
+        String prefix = subnetPrefix();
+        if (prefix == null) {
+            return urls;
+        }
+        int last = Integer.parseInt(prefix.substring(prefix.lastIndexOf('.') + 1));
+        for (int host = 1; host <= 254 && last > 0; host++) {
+            String ip = prefix + host;
+            if (responds(ip)) {
+                urls.add("http://" + ip + ":" + DISCOVERY_PORT);
+            }
+        }
+        return urls;
+    }
+
+    private boolean responds(String ip) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(
+                    "http://" + ip + ":" + DISCOVERY_PORT + "/api/health").openConnection();
+            conn.setConnectTimeout(600);
+            conn.setReadTimeout(600);
+            conn.setRequestMethod("GET");
+            if (conn.getResponseCode() == 200
+                    && "mathidle".equalsIgnoreCase(conn.getHeaderField("X-MathIdle"))) {
+                return true;
+            }
+        } catch (SocketTimeoutException ignored) {
+            // адрес не наш
+        } catch (Exception ignored) {
+            // адрес не наш
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
+        }
+        return false;
+    }
+
+    /** Адреса широковещания: 255.255.255.255 и адрес сети этого Wi-Fi. */
+    private List<String> broadcastAddresses() {
+        List<String> list = new ArrayList<>();
+        list.add("255.255.255.255");
+        String prefix = subnetPrefix();
+        if (prefix != null) {
+            list.add(prefix + "255");
+        }
+        return list;
+    }
+
+    /** «192.168.1.» — префикс подсети телефона по данным Wi-Fi. */
+    private String subnetPrefix() {
+        try {
+            WifiManager wifi = (WifiManager) getApplicationContext()
+                    .getSystemService(Context.WIFI_SERVICE);
+            int ip = wifi.getConnectionInfo().getIpAddress();
+            if (ip != 0) {
+                return String.format("%d.%d.%d.",
+                        ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF);
+            }
+        } catch (Exception ignored) {
+            // нет доступа к Wi-Fi — попробуем иначе
+        }
+        // запасной вариант: адрес сервера DNS обычно в той же подсети
+        try {
+            InetAddress local = InetAddress.getLocalHost();
+            byte[] raw = local.getAddress();
+            if (raw != null && raw.length == 4) {
+                return String.format("%d.%d.%d.", raw[0] & 0xFF, raw[1] & 0xFF, raw[2] & 0xFF);
+            }
+        } catch (UnknownHostException ignored) {
+            // ничего не вышло
+        }
+        return null;
     }
 
     /** Отдаёт файл из assets/www по «виртуальному» домену. */

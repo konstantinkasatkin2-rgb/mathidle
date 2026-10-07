@@ -24,10 +24,16 @@ android/app/src/main/assets/www/
 mathidle-selftest.txt
 .playwright/
 
-# база сервера аккаунтов: там хэши паролей игроков, в репозиторий нельзя
+# база сервера аккаунтов: там аккаунты игроков и ключ от неё.
+# В репозиторий нельзя ни то, ни другое.
 server/mathidle.db
 server/mathidle.db-shm
 server/mathidle.db-wal
+mathidle_accounts.db
+mathidle_accounts.db.tmp
+mathidle_accounts.db.key
+account_server.log
+*.db
 
 # сертификаты и временные файлы проверок
 server/cert.pem

@@ -39,10 +39,12 @@ for P in 8766 8000; do
     BUSY="$BUSY $P"
   fi
 done
+SKIP_DOWN=""
 if [ -n "$BUSY" ]; then
   echo "ВНИМАНИЕ: на портах$BUSY кто-то слушает."
-  echo "Игра попробует их как запасные и сценарий «сервер недоступен» не сработает."
-  echo "Остановите лишний сервер аккаунтов и повторите."
+  echo "Игра попробует их как запасные, поэтому сценарий «сервер недоступен»"
+  echo "не сработает и будет пропущен. Остановите лишний сервер и повторите."
+  SKIP_DOWN="yes"
 fi
 
 python server/account_server.py --port "$PORT" --db "$TMP/test.db" >"$TMP/server.log" 2>&1 &
@@ -60,11 +62,19 @@ sleep 3
 
 echo "== проверка аккаунтов в $(basename "$CHROME") =="
 STATUS=0
-for MODE in up down; do
+for MODE in up native down; do
   # в сценарии down указываем заведомо закрытый порт: сервер не отвечает
   case "$MODE" in
-    up)   TARGET_PORT="$PORT" ;;
-    down) TARGET_PORT="$DEAD_PORT" ;;
+    up)     TARGET_PORT="$PORT" ;;
+    native) TARGET_PORT="$PORT" ;;
+    down)
+      if [ -n "$SKIP_DOWN" ]; then
+        echo ""
+        echo "сценарий down — пропущен: порты$BUSY заняты"
+        continue
+      fi
+      TARGET_PORT="$DEAD_PORT"
+      ;;
   esac
   URL="http://127.0.0.1:$((PORT + 1))/tools/account_probe.html?mode=$MODE&port=$TARGET_PORT"
   "$CHROME" --headless --disable-gpu --no-sandbox --hide-scrollbars \

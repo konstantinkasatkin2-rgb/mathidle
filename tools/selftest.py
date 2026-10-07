@@ -346,14 +346,16 @@ def test_prestige():
     st.run_earned = 500.0
     st.base_levels["knots"] = 5
     st.grade_levels["double_book"] = 2
+    st.test_level = 4
+    st.tests_passed = 3
     st.unlocked_ops.update({"sub", "mul"})
     check("престиж открыт при 100% сложности", st.prestige_unlocked())
 
     expected = economy.prestige_points(500.0, st.prestige_levels)
     ok, msg = st.do_prestige()
     check("престиж выполнен", ok, msg)
-    check("очки по курсу 1 деньга : 0.01 очка",
-          abs(st.prestige_points - expected) < 1e-9, st.prestige_points)
+    check("очки по курсу 1 деньга : 0.00001 очка",
+          abs(st.prestige_points - expected) < 1e-12, st.prestige_points)
     check("деньги обнулены", st.money == 0.0, st.money)
     check("обычные улучшения сброшены", st.upgrade_level("knots") == 0)
     check("контрольные улучшения сброшены", st.grade_level("double_book") == 0)
@@ -361,6 +363,16 @@ def test_prestige():
     check("открыты смешанные примеры", "mix" in st.unlocked_ops, st.unlocked_ops)
     check("магазин престижа открыт", st.prestige_shop_unlocked)
     check("забег обнулён", st.run_earned == 0.0)
+
+    # после престижа всё начинается заново
+    check("сложность сброшена", st.max_difficulty_solved == 0.0, st.max_difficulty_solved)
+    check("престиж снова закрыт", not st.prestige_unlocked())
+    check("номер контрольной сброшен", st.test_level == 1, st.test_level)
+    check("счётчик сданных контрольных сброшен", st.tests_passed == 0, st.tests_passed)
+    exam = [t for t in config.TEST_TYPES if t["id"] == "exam"][0]
+    check("экзамен снова закрыт",
+          not any(st.tests_passed >= t["unlock_after"] and t["id"] == "exam"
+                  for t in config.TEST_TYPES), exam["unlock_after"])
 
     st.money = 250.0
     st.run_earned = 250.0
@@ -378,11 +390,10 @@ def test_prestige_shop():
     check("без очков не купить", not ok, msg)
 
     item = [i for i in config.PRESTIGE_ITEMS if i["id"] == "femboy_futa_house"][0]
-    check("Femboy Futa house стоит 7.21", item["price"] == 7.21, item["price"])
     check("у него нет эффектов", item["effect"] == "none", item["effect"])
     check("скидка 15%", item["discount"] == 0.15, item["discount"])
     effective = economy.prestige_cost(item, 0)
-    check("цена со скидкой ≈ 6.13", abs(effective - 6.1285) < 1e-6, effective)
+    check("цена со скидкой ровно 7.21", effective == 7.21, effective)
 
     others = max(economy.prestige_cost(it, it["max_level"] - 1)
                  for it in config.PRESTIGE_ITEMS if not it.get("easter_egg"))

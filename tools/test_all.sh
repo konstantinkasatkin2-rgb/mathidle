@@ -35,7 +35,15 @@ bash tools/layout_check.sh | grep -E "ПРОБЛЕМ|ВСЁ ПОМЕЩАЕТСЯ
 
 echo ""
 echo "############ 6. Аккаунты (настоящий браузер) ############"
-bash tools/account_check.sh | grep -E "работают|сломаны|FAIL|ПРОВАЛ|ВНИМАНИЕ" || true
+bash tools/account_check.sh | grep -E "работают|сломаны|FAIL|ПРОВАЛ|ВНИМАНИЕ|пропущен" || true
+
+echo ""
+echo "############ 7. Шифрование базы ############"
+python tools/crypto_test.py | tail -2
+
+echo ""
+echo "############ 8. Зашифрованная база и сервер ############"
+python tools/store_test.py | tail -2
 
 echo ""
 echo "############ Готово ############"

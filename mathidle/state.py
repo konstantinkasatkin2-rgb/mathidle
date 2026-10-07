@@ -320,6 +320,15 @@ class GameState:
         self.test = None
         self.current = None
 
+        # Контрольные и сложность начинаются заново: после престижа их надо
+        # проходить заново, иначе престиж можно было бы «застрять» на одном
+        # и том же уровне навсегда.
+        if config.PRESTIGE["reset_tests"]:
+            self.test_level = 1
+            self.tests_passed = 0
+        if config.PRESTIGE["reset_difficulty"]:
+            self.max_difficulty_solved = 0.0
+
         if (self.prestige_count == 1
                 and config.PRESTIGE["unlock_mixed_on_first"]
                 and "mix" not in self.unlocked_ops):
@@ -330,6 +339,8 @@ class GameState:
             f"Престиж! +{economy.fmt_money(gained)} очков престижа "
             f"(престиж #{self.prestige_count})", "pass"
         )
+        if config.PRESTIGE["reset_tests"] or config.PRESTIGE["reset_difficulty"]:
+            self.log("Контрольные и сложность сброшены — начинаем заново", "test")
         self.next_problem()
         return True, f"Престиж #{self.prestige_count}: +{economy.fmt_money(gained)} очк."
 

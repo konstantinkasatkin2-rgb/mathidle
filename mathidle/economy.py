@@ -65,7 +65,7 @@ def prestige_effect_total(prestige_levels, effect):
 
 
 def prestige_points(earned, prestige_levels=None):
-    """Очки престижа за заработанные деньги: 1 деньга : 0.01 очка."""
+    """Очки престижа за заработанные деньги: 1 деньга : 0.00001 очка."""
     multiplier = 1.0
     if prestige_levels:
         multiplier = 1.0 + prestige_effect_total(prestige_levels, "prestige_gain")

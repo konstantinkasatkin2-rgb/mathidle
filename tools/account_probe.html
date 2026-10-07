@@ -21,6 +21,7 @@
 //
 //   ?port=8766&mode=up     сервер запущен: регистрация, вход, ошибки сервера
 //   ?port=9999&mode=down   сервер не запущен: понятное объяснение
+//   ?mode=native           мост приложения Android: сервер найден сам
 var params = new URLSearchParams(location.search);
 var PORT = params.get("port") || "8766";
 var MODE = params.get("mode") || "up";
@@ -63,6 +64,43 @@ function pause(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 (async function () {
   var frame = await frameReady("../web/index.html");
   var d = frame.contentDocument;
+  var w = frame.contentWindow;
+
+  if (MODE === "native") {
+    // Так же устроен мост приложения на Android: игра вызывает
+    // MathIdleNative.findServers(), а нативная часть отвечает адресами.
+    // В приложении мост есть до старта страницы; здесь ставим его сразу
+    // после загрузки — игра несколько раз проверяет его наличие.
+    w.MathIdleNative = {
+      findServers: function () {
+        setTimeout(function () {
+          w.MathIdleNativeServers([URL_]);
+        }, 120);
+      },
+    };
+    // ждём, пока игра заметит мост (она пробует каждые полсекунды)
+    await pause(1200);
+    d.querySelector('[data-tab="settings"]').click();
+    await pause(300);
+    var picked = d.getElementById("serverUrl");
+    log("игра подхватила найденный адрес: " + (picked && picked.value === URL_),
+        !!picked && picked.value === URL_);
+    var shown = /Нойдено в сети|айдено в сети/.test(d.querySelector("#panel").innerHTML);
+    log("адрес показан в настройках: " + shown, shown);
+
+    d.getElementById("loginName").value = "mob-" + USER;
+    d.getElementById("loginPass").value = "parol123";
+    d.querySelectorAll(".warn").forEach(function (n) { n.remove(); });
+    d.querySelector("[data-register]").click();
+    var res = await waitFor(d, 15000);
+    log("регистрация по найденному адресу: " + res, /ВЫХОД ВЫПОЛНЕН/.test(res));
+    var rawFetch = /failed to fetch/i.test(out.textContent);
+    log("техническое «Failed to fetch» не показывается: " + !rawFetch, !rawFetch);
+    out.className = failures ? "bad" : "ok";
+    document.title = failures ? "ACCOUNT-FAIL" : "ACCOUNT-OK";
+    return;
+  }
+
   d.querySelector('[data-tab="settings"]').click();
   await pause(300);
 

@@ -5,9 +5,20 @@
     python server/account_server.py             # порт 8766
     python server/account_server.py --port 8000
 
-Хранит всё в SQLite (server/mathidle.db). Пароли — PBKDF2-SHA256 с солью,
-токены — случайные строки с сроком действия. Зависимостей нет: только
-стандартная библиотека.
+Где лежат данные:
+    База по умолчанию — mathidle_accounts.db в папке проекта (например
+    D:\\mathidle). Файл зашифрован: это не SQLite, а контейнер
+    ChaCha20 + HMAC-SHA256 (см. server/secret_store.py). Имена игроков,
+    хэши паролей и сохранения прогресса в открытом виде на диске
+    не лежат — открыть базу текстовым редактором нельзя.
+    Ключ хранится рядом, в mathidle_accounts.key: это защищает от
+    случайного подглядывания, но не от того, кто забрал всю папку.
+    Настоящая защита — ключ из пароля:
+        set MATHIDLE_DB_KEY=пароль   (или --passphrase)
+    тогда на диске ключа нет вовсе, и забытый пароль означает потерю базы.
+
+Пароли — PBKDF2-SHA256 с солью, токены — случайные строки со сроком
+действия. Зависимостей нет: только стандартная библиотека.
 
 API:
     GET  /api/health                  проверка живости
@@ -27,6 +38,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import sqlite3
 import sys
 import threading
@@ -34,55 +46,229 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 
 from mathidle import config  # noqa: E402
+import secret_store as secret  # noqa: E402
 
-DB_PATH = os.path.join(HERE, "mathidle.db")
+# База — в папке проекта, а не рядом с кодом сервера: так её не потерять
+# при пересборке и не затереть обновлением.
+DB_PATH = os.environ.get("MATHIDLE_DB") or os.path.join(ROOT, "mathidle_accounts.db")
+LEGACY_DB_PATH = os.path.join(HERE, "mathidle.db")   # где лежала база в 1.2.3
 TOKEN_DAYS = config.ACCOUNT["session_token_days"]
 MAX_SAVE_BYTES = 512 * 1024
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,24}$")
+DISCOVERY_TOKEN = "mathidle"
 
 _lock = threading.Lock()
 _db = None
+_master_key = None
+
+
+# --------------------------------------------------------------------------
+# Ключ
+# --------------------------------------------------------------------------
+def master_key(passphrase=None):
+    """Ключ шифрования: из пароля или из файла рядом с базой."""
+    global _master_key
+    if _master_key is not None:
+        return _master_key
+    if passphrase:
+        # соль лежит в самом контейнере, поэтому здесь она фиксированная:
+        # ключ выводится только из пароля
+        _master_key = secret.key_from_passphrase(passphrase, b"mathidle-static-salt")
+    else:
+        key_path = DB_PATH + ".key"
+        _master_key = secret.load_or_create_key(key_path)
+    return _master_key
 
 
 # --------------------------------------------------------------------------
 # База
 # --------------------------------------------------------------------------
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    username    TEXT UNIQUE NOT NULL,
+    salt        BLOB NOT NULL,
+    password    BLOB NOT NULL,
+    created_at  REAL NOT NULL,
+    last_seen   REAL
+);
+CREATE TABLE IF NOT EXISTS saves (
+    user_id     INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    payload     TEXT NOT NULL,
+    updated_at  REAL NOT NULL,
+    bytes       INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tokens (
+    token       TEXT PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  REAL NOT NULL,
+    expires_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tokens_user ON tokens(user_id);
+"""
+
+
+def open_memory_db():
+    """Пустая база в памяти — на диске её нет ни в каком виде."""
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(SCHEMA)
+    conn.commit()
+    return conn
+
+
+def load_plaintext_db(path):
+    """Читает обычную базу SQLite с диска (перенос со старой версии)."""
+    conn = sqlite3.connect(path)
+    try:
+        conn.row_factory = sqlite3.Row
+        count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    except sqlite3.Error:
+        conn.close()
+        return None
+    conn.close()
+    return count
+
+
+def import_legacy(target, path):
+    """Переносит аккаунты из старой незашифрованной базы."""
+    src = sqlite3.connect(path)
+    src.row_factory = sqlite3.Row
+    try:
+        users = src.execute(
+            "SELECT id, username, salt, password, created_at, last_seen"
+            " FROM users").fetchall()
+        saves = src.execute(
+            "SELECT user_id, payload, updated_at, bytes FROM saves").fetchall()
+        tokens = src.execute(
+            "SELECT token, user_id, created_at, expires_at FROM tokens").fetchall()
+    except sqlite3.Error:
+        src.close()
+        return 0
+
+    ids = {}
+    for row in users:
+        cur = target.execute(
+            "INSERT INTO users (username, salt, password, created_at, last_seen)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (row["username"], row["salt"], row["password"],
+             row["created_at"], row["last_seen"]))
+        ids[row["id"]] = cur.lastrowid
+    for row in saves:
+        new_id = ids.get(row["user_id"])
+        if new_id:
+            target.execute(
+                "INSERT INTO saves (user_id, payload, updated_at, bytes)"
+                " VALUES (?, ?, ?, ?)",
+                (new_id, row["payload"], row["updated_at"], row["bytes"]))
+    for row in tokens:
+        new_id = ids.get(row["user_id"])
+        if new_id:
+            target.execute(
+                "INSERT OR IGNORE INTO tokens (token, user_id, created_at, expires_at)"
+                " VALUES (?, ?, ?, ?)",
+                (row["token"], new_id, row["created_at"], row["expires_at"]))
+    src.close()
+    target.commit()
+    return len(users)
+
+
 def db():
+    """База в памяти; на диске лежит только зашифрованный контейнер."""
     global _db
     if _db is None:
-        _db = sqlite3.connect(DB_PATH, check_same_thread=False)
-        _db.row_factory = sqlite3.Row
-        _db.execute("PRAGMA journal_mode=WAL")
-        _db.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                username    TEXT UNIQUE NOT NULL,
-                salt        BLOB NOT NULL,
-                password    BLOB NOT NULL,
-                created_at  REAL NOT NULL,
-                last_seen   REAL
-            );
-            CREATE TABLE IF NOT EXISTS saves (
-                user_id     INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-                payload     TEXT NOT NULL,
-                updated_at  REAL NOT NULL,
-                bytes       INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS tokens (
-                token       TEXT PRIMARY KEY,
-                user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                created_at  REAL NOT NULL,
-                expires_at  REAL NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_tokens_user ON tokens(user_id);
-            """
-        )
-        _db.commit()
+        _db = open_memory_db()
+        if os.path.exists(DB_PATH):
+            with open(DB_PATH, "rb") as fh:
+                plain = secret.unseal(fh.read(), master_key())
+            _db.deserialize(plain)
+        elif os.path.exists(LEGACY_DB_PATH) and DB_PATH != LEGACY_DB_PATH:
+            count = import_legacy(_db, LEGACY_DB_PATH)
+            if count:
+                flush()
+                print("Перенесено аккаунтов из старой базы: %d" % count)
+        else:
+            flush()          # сразу создаём зашифрованный файл
     return _db
+
+
+def flush():
+    """Записывает базу на диск — уже зашифрованной."""
+    if _db is None:
+        return
+    secret.write_atomic(DB_PATH, secret.seal(_db.serialize(), master_key()))
+
+
+def commit():
+    """Записать изменения и сразу зашифровать на диск.
+
+    Замена db().commit(): данные не должны лежать на диске открытыми
+    даже на секунду.
+    """
+    _db.commit()
+    flush()
+
+
+# --------------------------------------------------------------------------
+# Поиск сервера в локальной сети
+# --------------------------------------------------------------------------
+def lan_address():
+    """IP этого компьютера, каким его видят другие устройства в сети."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("8.8.8.8", 80))
+        return probe.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        probe.close()
+
+
+def _discovery_loop(sock, port, scheme, stop):
+    """Отвечает на UDP-«пинги»: телефон спрашивает «есть ли тут сервер?»."""
+    while not stop.is_set():
+        try:
+            data, addr = sock.recvfrom(512)
+        except OSError:
+            if stop.is_set():
+                return
+            continue
+        if DISCOVERY_TOKEN.encode() not in data:
+            continue
+        reply = json.dumps({
+            "service": "mathidle",
+            "version": config.GAME["version"],
+            "port": port,
+            "scheme": scheme,
+            "encrypted": True,
+        }).encode()
+        try:
+            sock.sendto(reply, addr)
+        except OSError:
+            pass
+
+
+def start_discovery(port, scheme):
+    """Запускает UDP-слушатель, чтобы игра нашла сервер сама."""
+    stop = threading.Event()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.bind(("", port))
+    except OSError as err:
+        sock.close()
+        print("Поиск в сети не запустился: %s" % err)
+        print("Адрес придётся ввести вручную в настройках игры.")
+        return None, stop
+    thread = threading.Thread(target=_discovery_loop,
+                              args=(sock, port, scheme, stop), daemon=True)
+    thread.start()
+    return sock, stop
 
 
 def hash_password(password, salt=None):
@@ -133,6 +319,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
         self.send_header("Cache-Control", "no-store")
+        # По этому заголовку телефон узнаёт, что ответил наш сервер,
+        # а не какой-то другой сайт на том же адресе.
+        self.send_header("X-MathIdle", "1")
+        self.send_header("X-MathIdle-Version", config.GAME["version"])
         self.end_headers()
         self.wfile.write(body)
 
@@ -224,7 +414,7 @@ class Handler(BaseHTTPRequestHandler):
             db().execute(
                 "INSERT INTO tokens (token, user_id, created_at, expires_at)"
                 " VALUES (?, ?, ?, ?)", (token, user_id, now, token_expiry()))
-            db().commit()
+            commit()
         self.send_json(201, {"username": username, "token": token})
 
     def login(self, data):
@@ -249,7 +439,7 @@ class Handler(BaseHTTPRequestHandler):
             db().execute(
                 "INSERT INTO tokens (token, user_id, created_at, expires_at)"
                 " VALUES (?, ?, ?, ?)", (token, row["id"], now, token_expiry()))
-            db().commit()
+            commit()
         self.send_json(200, {"username": username, "token": token})
 
     def get_save(self):
@@ -296,7 +486,7 @@ class Handler(BaseHTTPRequestHandler):
                      updated_at = excluded.updated_at,
                      bytes = excluded.bytes""",
                 (user["id"], payload, now, len(payload.encode("utf-8"))))
-            db().commit()
+            commit()
         self.send_json(200, {"ok": True, "updated_at": now})
 
     def leaderboard(self):
@@ -317,51 +507,121 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, {"entries": entries})
 
 
+def setup_console():
+    """Готовит вывод: кириллица, символы и отсутствие консоли.
+
+    Без этого сервер падает на первой же строке вывода, когда его запускают
+    двойным щелчком или из .bat: консоль Windows не понимает UTF-8.
+    Ещё две беды, которые стоили времени:
+      * stdout буферизуется, и при остановке всё напечатанное теряется —
+        игрок не видит ни адреса, ни подсказки;
+      * при запуске без консоли поток вообще None, и print() падает.
+    """
+    if sys.stdout is None:
+        try:
+            sys.stdout = open(os.path.join(ROOT, "account_server.log"),
+                              "a", encoding="utf-8")
+        except OSError:
+            sys.stdout = open(os.devnull, "w")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w")
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace",
+                               line_buffering=True)
+        except (AttributeError, ValueError):
+            pass
+
+
 def main():
     global DB_PATH
 
+    setup_console()
     parser = argparse.ArgumentParser(description="Сервер аккаунтов Math Idle")
     parser.add_argument("--port", type=int, default=8766)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--db", default=DB_PATH)
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--db", default=DB_PATH, help="файл зашифрованной базы")
+    parser.add_argument("--passphrase", default=None,
+                        help="пароль для базы вместо файла ключа")
     parser.add_argument("--https", action="store_true",
                         help="поднять по HTTPS (нужно, если игра открыта по HTTPS)")
     parser.add_argument("--cert", default=None, help="файл сертификата .pem")
     parser.add_argument("--key", default=None, help="файл ключа .pem")
+    parser.add_argument("--no-discovery", action="store_true",
+                        help="не отвечать на поиск в локальной сети")
     args = parser.parse_args()
 
     DB_PATH = args.db
+    passphrase = args.passphrase or os.environ.get("MATHIDLE_DB_KEY") or None
+
+    scheme = "https" if args.https else "http"
+    ip = lan_address()
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    scheme = "http"
     if args.https:
         cert = args.cert or os.path.join(HERE, "cert.pem")
         key = args.key or os.path.join(HERE, "key.pem")
         if not (os.path.exists(cert) and os.path.exists(key)):
             print(f"Нет сертификата: {cert} / {key}")
-            print("Создать (команда openssl):")
-            print('  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \\')
-            print(f'    -keyout "{key}" -out "{cert}" -subj "/CN=localhost"')
-            print("Либо запустите tools/make_cert.sh")
+            print("Создать: bash tools/make_cert.sh")
             server.server_close()
             return 1
         import ssl
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(certfile=cert, keyfile=key)
         server.socket = context.wrap_socket(server.socket, server_side=True)
-        scheme = "https"
 
-    print(f"Сервер аккаунтов Math Idle: {scheme}://{args.host}:{args.port}")
-    print(f"База: {DB_PATH}")
-    if scheme == "https" and args.host in ("127.0.0.1", "localhost"):
-        print("ВНИМАНИЕ: сертификат самоподписанный для localhost. Браузер спросит")
-        print("подтверждение — нажмите «Всё равно перейти», иначе запрос не пройдёт.")
+    # База читается сразу: если пароль не тот, лучше узнать об этом сейчас,
+    # чем получить отказ в середине игры.
+    try:
+        master_key(passphrase)
+        db()
+    except secret.SecretError as err:
+        print("База не открылась: %s" % err)
+        print("Если ключ задан паролем — проверь MATHIDLE_DB_KEY.")
+        server.server_close()
+        return 1
+
+    print(f"Сервер аккаунтов Math Idle {config.GAME['version']}")
+    print(f"  здесь:  {scheme}://127.0.0.1:{args.port}")
+    print(f"  в сети: {scheme}://{ip}:{args.port}")
+    print(f"  база:   {DB_PATH} (зашифрована)")
+    if passphrase:
+        print("  ключ:   из пароля MATHIDLE_DB_KEY, на диске его нет")
+    else:
+        print(f"  ключ:   {DB_PATH}.key")
+    print("")
+    print("В игре: Настройки → «Адрес сервера аккаунтов». На телефоне игра")
+    print("найдёт сервер сама, если он запущен на этом компьютере.")
+    if args.host == "0.0.0.0":
+        print("")
+        print("Сервер виден всей сети, а не только этому компьютеру — так его")
+        print("находит телефон. Пароли хранятся хэшами, но прогресс и имена")
+        print("доступны любому в этой сети. Для одного компьютера запусти")
+        print("с --host 127.0.0.1.")
+
+    stop = threading.Event()
+    if not args.no_discovery:
+        sock, stop = start_discovery(args.port, scheme)
+        if sock is not None:
+            print("  поиск в сети: включён (телефон найдёт сервер сам)")
+
+    if args.https and args.host in ("0.0.0.0", "127.0.0.1", "localhost"):
+        print("")
+        print("ВНИМАНИЕ: сертификат самоподписанный, браузер спросит подтверждение.")
+
+    print("")
     print("Остановить: Ctrl+C")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nОстановлено.")
+    finally:
+        stop.set()
         server.server_close()
+        with _lock:
+            flush()
+        print("База сохранена и зашифрована.")
 
 
 if __name__ == "__main__":
