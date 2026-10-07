@@ -30,6 +30,56 @@ def grade_cost(item, level):
     return item["price"] * (item.get("growth", 1.0) ** level)
 
 
+def ascension_rate_multiplier(ascensions):
+    """Во сколько раз улучшение стало лучше после всех вознесений."""
+    return config.ASCENSION["rate_multiplier"] ** max(0, ascensions)
+
+
+def ascension_cost_multiplier(ascensions):
+    """Во сколько раз улучшение стало дороже после всех вознесений."""
+    return config.ASCENSION["cost_multiplier"] ** max(0, ascensions)
+
+
+def prestige_cost(item, level):
+    """Цена следующей покупки престижного улучшения: price + step·(n−1).
+
+    Для «Femboy Futa house» действует скидка из конфига.
+    """
+    discount = item.get("discount", 0.0)
+    price = item["price"] * (1.0 - discount)
+    return round(price + item.get("step", 0.0) * level, 6)
+
+
+def prestige_base_price(item):
+    """Цена первой покупки с учётом скидки."""
+    return prestige_cost(item, 0)
+
+
+def prestige_effect_total(prestige_levels, effect):
+    """Сумма эффекта престижных улучшений одного типа."""
+    total = 0.0
+    for item in config.PRESTIGE_ITEMS:
+        if item["effect"] == effect:
+            total += item["per_level"] * prestige_levels.get(item["id"], 0)
+    return total
+
+
+def prestige_points(earned, prestige_levels=None):
+    """Очки престижа за заработанные деньги: 1 деньга : 0.01 очка."""
+    multiplier = 1.0
+    if prestige_levels:
+        multiplier = 1.0 + prestige_effect_total(prestige_levels, "prestige_gain")
+    return earned * config.PRESTIGE["points_per_money"] * multiplier
+
+
+def test_type(test_type_id):
+    """Описание вида контрольной по id."""
+    for tt in config.TEST_TYPES:
+        if tt["id"] == test_type_id:
+            return tt
+    raise KeyError(test_type_id)
+
+
 # --------------------------------------------------------------------------
 # Множители
 # --------------------------------------------------------------------------
@@ -42,23 +92,37 @@ def effect_total(grade_levels, effect):
     return total
 
 
-def money_multiplier(grade_levels):
-    """Итоговый множитель денег: 1.0 + бонусы тетрадей."""
-    return 1.0 + effect_total(grade_levels, "money_mult")
+def money_multiplier(grade_levels, prestige_levels=None):
+    """Итоговый множитель денег: 1.0 + бонусы тетрадей + престижа."""
+    total = 1.0 + effect_total(grade_levels, "money_mult")
+    if prestige_levels:
+        total += prestige_effect_total(prestige_levels, "money_mult")
+    return total
 
 
-def speed_multiplier(grade_levels):
+def speed_multiplier(grade_levels, prestige_levels=None):
     """Во сколько раз шире окно «быстрого» ответа."""
-    return 1.0 + effect_total(grade_levels, "speed_window")
+    total = 1.0 + effect_total(grade_levels, "speed_window")
+    if prestige_levels:
+        total += prestige_effect_total(prestige_levels, "speed_window")
+    return total
 
 
 def add_multiplier(grade_levels):
     return 1.0 + effect_total(grade_levels, "add_bonus")
 
 
-def passive_multiplier(grade_levels):
-    """Множитель пассивного дохода (Автоответчик)."""
-    return 1.0 + effect_total(grade_levels, "passive_share")
+def passive_multiplier(grade_levels, prestige_levels=None):
+    """Множитель пассивного дохода (Автоответчик + престиж)."""
+    total = 1.0 + effect_total(grade_levels, "passive_share")
+    if prestige_levels:
+        total += prestige_effect_total(prestige_levels, "passive_share")
+    return total
+
+
+def keep_money_share(prestige_levels):
+    """Доля денег, которая переживает престиж."""
+    return prestige_effect_total(prestige_levels or {}, "keep_money")
 
 
 def hint_every(grade_levels):
@@ -85,11 +149,12 @@ def difficulty_factor(difficulty):
     return 1.0 - (1.0 - R["diff_floor"]) * min(1.0, max(0.0, difficulty))
 
 
-def speed_factor(elapsed, grade_levels=None):
+def speed_factor(elapsed, grade_levels=None, prestige_levels=None):
     """1.0 за мгновенный ответ, speed_floor за очень долгий."""
     grade_levels = grade_levels or {}
-    fast = R["fast_window"] * speed_multiplier(grade_levels)
-    slow = R["slow_window"] * speed_multiplier(grade_levels)
+    prestige_levels = prestige_levels or {}
+    fast = R["fast_window"] * speed_multiplier(grade_levels, prestige_levels)
+    slow = R["slow_window"] * speed_multiplier(grade_levels, prestige_levels)
     if elapsed <= fast:
         return 1.0
     if elapsed >= slow:
@@ -103,18 +168,19 @@ def combo_bonus(combo):
     return min(R["combo_max"], combo * R["combo_step"])
 
 
-def reward(op_id, difficulty, elapsed, combo=0, grade_levels=None):
+def reward(op_id, difficulty, elapsed, combo=0, grade_levels=None, prestige_levels=None):
     """Деньги за один решённый пример.
 
     Сложение по ТЗ даёт максимум 0.01: cap 0.01 * 1.0 * 1.0 * множители.
     """
     grade_levels = grade_levels or {}
+    prestige_levels = prestige_levels or {}
     op = config.operation(op_id)
     amount = (
         op["cap"]
         * difficulty_factor(difficulty)
-        * speed_factor(elapsed, grade_levels)
-        * money_multiplier(grade_levels)
+        * speed_factor(elapsed, grade_levels, prestige_levels)
+        * money_multiplier(grade_levels, prestige_levels)
         * (1.0 + combo_bonus(combo))
     )
     if op_id == "add":
@@ -122,38 +188,61 @@ def reward(op_id, difficulty, elapsed, combo=0, grade_levels=None):
     return amount
 
 
-def passive_reward(op_id, grade_levels=None):
+def passive_reward(op_id, grade_levels=None, prestige_levels=None):
     """Деньги за один автоматически решённый (idle) пример."""
     grade_levels = grade_levels or {}
+    prestige_levels = prestige_levels or {}
     op = config.operation(op_id)
     return (
         op["cap"]
         * difficulty_factor(R["idle_difficulty"])
-        * money_multiplier(grade_levels)
+        * money_multiplier(grade_levels, prestige_levels)
         * R["passive_share"]
-        * passive_multiplier(grade_levels)
+        * passive_multiplier(grade_levels, prestige_levels)
     )
 
 
-def test_reward(level):
-    """Награда за пройденную контрольную."""
-    return config.TEST["pass_bonus"] + config.TEST["pass_bonus_per_level"] * (level - 1)
+def test_reward(level, test_type_id="test"):
+    """Награда за пройденную контрольную с учётом вида проверки."""
+    tt = test_type(test_type_id)
+    base = config.TEST["pass_bonus"] + config.TEST["pass_bonus_per_level"] * (level - 1)
+    return base * tt["reward_mult"]
 
 
-def test_problem_count(level):
+def test_problem_count(level, test_type_id="test"):
+    tt = test_type(test_type_id)
+    base = min(
+        config.TEST["max_problems"],
+        config.TEST["base_problems"] + config.TEST["problems_per_level"] * (level - 1),
+    )
+    return max(1, int(round(base * tt["problems_mult"])))
+
+
+def test_difficulty(level, test_type_id="test", prestige_levels=None):
+    """Сложность примеров в контрольной: база + уровень + бонус вида + престиж."""
+    tt = test_type(test_type_id)
     t = config.TEST
-    return min(t["max_problems"], t["base_problems"] + t["problems_per_level"] * (level - 1))
+    base = t["diff_base"] + t["diff_per_level"] * (level - 1)
+    value = base + tt["diff_bonus"]
+    if prestige_levels:
+        value += prestige_effect_total(prestige_levels, "test_difficulty")
+    return min(t["diff_max"], value)
 
 
-def test_difficulty(level):
+def test_price(test_type_id="test"):
+    return test_type(test_type_id)["price"]
+
+
+def test_time_limit(level, grade_levels=None, test_type_id="test", prestige_levels=None):
+    """Лимит времени на контрольную с учётом вида проверки и улучшений."""
+    tt = test_type(test_type_id)
     t = config.TEST
-    return min(t["diff_max"], t["diff_base"] + t["diff_per_level"] * (level - 1))
-
-
-def test_time_limit(level, grade_levels=None):
-    t = config.TEST
-    count = test_problem_count(level)
-    return t["base_time"] + t["time_per_problem"] * count + test_time_bonus(grade_levels or {})
+    count = test_problem_count(level, test_type_id)
+    base = t["base_time"] + t["time_per_problem"] * count
+    base = base * tt["time_mult"] + test_time_bonus(grade_levels or {})
+    if prestige_levels:
+        base *= 1.0 + prestige_effect_total(prestige_levels, "test_time")
+    return base
 
 
 # --------------------------------------------------------------------------

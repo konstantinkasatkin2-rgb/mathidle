@@ -109,6 +109,33 @@ main {
   letter-spacing: .01em;
 }
 
+/* окно скорости: зелёная зона быстрого ответа + бегущий маркер */
+#speedGauge { margin: 6px auto 2px; max-width: 340px; }
+.gauge-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.gauge {
+  position: relative;
+  height: 12px;
+  background: var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.gauge i {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: var(--green);
+  border-radius: 6px;
+}
+.gauge b {
+  position: absolute;
+  top: -3px; bottom: -3px;
+  width: 4px;
+  margin-left: -2px;
+  background: var(--text);
+  border-radius: 2px;
+  transition: left .1s linear;
+}
+#diffWrap { margin: 8px auto 0; max-width: 340px; }
+
 .answer {
   position: relative;
   margin: 10px 0 12px;
@@ -214,6 +241,76 @@ main {
 .item:disabled { opacity: .5; cursor: default; }
 .item .prog { height: 4px; background: var(--line); border-radius: 3px; margin-top: 8px; overflow: hidden; }
 .item .prog i { display: block; height: 100%; background: var(--accent); }
+
+.item .toggle {
+  float: right;
+  background: var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 11px;
+}
+.item.affordable .toggle { background: var(--accent); color: #06201e; }
+
+.panel h4 { margin: 12px 0 4px; font-size: 14px; color: var(--text); }
+
+.row-fields { display: flex; gap: 8px; margin: 10px 0; }
+.row-fields input {
+  flex: 1;
+  min-width: 0;
+  background: #0d111a;
+  border: 2px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  padding: 10px;
+  font: inherit;
+  font-size: 15px;
+}
+.row-fields input:focus { outline: none; border-color: var(--accent); }
+.big-btn + .big-btn { margin-top: 8px; }
+
+/* затемнение после «Femboy Futa house» */
+.egg-veil {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 6, 12, .92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 30;
+}
+.egg-card {
+  background: #0c0e16;
+  border: 3px solid var(--gold);
+  border-radius: 20px;
+  padding: 28px 24px;
+  text-align: center;
+  max-width: 520px;
+  width: 100%;
+  animation: pop .2s ease-out;
+}
+.egg-card h2 { margin: 0 0 10px; color: var(--gold); font-size: 28px; }
+.egg-card p { margin: 0 0 14px; color: var(--text); font-size: 15px; }
+.egg-wait {
+  margin: 0 0 14px;
+  font-size: 24px;
+  color: var(--gold);
+  animation: pulse 2s ease-in-out infinite;
+}
+.egg-card small { color: var(--muted); font-size: 12px; }
+@keyframes pulse { 50% { opacity: .55; } }
+
+/* крупный текст */
+body.big-text { font-size: 115%; }
+body.big-text .keypad button { font-size: 26px; padding: 15px 0; }
+body.big-text .item .name { font-size: 18px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .floater, .modal-card, .egg-card, .egg-wait,
+  #app.flash-ok::after, #app.flash-bad::after, #log div, .gauge b { animation: none; transition: none; }
+}
 
 .info-card { background: #0d111a; border: 2px solid var(--blue); border-radius: 12px; padding: 12px; }
 .info-card h3 { margin: 0 0 8px; color: var(--blue); font-size: 18px; }

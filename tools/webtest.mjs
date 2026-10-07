@@ -148,8 +148,8 @@ async function phase2() {
 
   // --- сдаём контрольную ---
   click2('[data-tab="test"]');
-  check("кнопка старта есть", !!d.querySelector('[data-start="1"]'));
-  click2('[data-start="1"]');
+  check("кнопка старта есть", !!d.querySelector('[data-start="test"]'));
+  click2('[data-start="test"]');
   check("контрольная началась", txt2("playTitle").includes("Контрольная"), txt2("playTitle"));
   check("появился таймер", !d.getElementById("timerWrap").classList.contains("hidden"));
 
@@ -163,7 +163,7 @@ async function phase2() {
   click2("#modalClose");
 
   // --- магазин контрольных улучшений ---
-  click2('[data-tab="grades"]');
+  click2('[data-tab="shop"]');
   check("вкладка магазина доступна", !!d.querySelector('[data-grade="unlock_sub"]'));
   check("цена вычитания 25",
     d.querySelector('[data-grade="unlock_sub"] .price').textContent === "25",
@@ -231,7 +231,7 @@ async function phase2() {
   process.exit(failed.length || errors.length ? 1 : 0);
 }
 
-setTimeout(() => {
+setTimeout(async () => {
   runScript("balance.js");
   runScript("game.js");
 
@@ -265,13 +265,44 @@ setTimeout(() => {
   check("вкладка контрольной показывает билет", true);
 
   click('[data-tab="test"]');
-  check("вкладка контрольной открылась", !!$('[data-start="1"]'));
-  const testInfo = $(".info-card").textContent;
-  check("видна цена билета 10", testInfo.includes("10"), testInfo.slice(0, 60));
-  click('[data-tab="grades"]');
+  check("вкладка проверок открылась", !!$('[data-start="test"]'));
+  check("обычная контрольная стоит 10", $('[data-start="test"]').textContent.includes("10"),
+    $('[data-start="test"]').textContent.trim());
+  check("итоговая дороже обычной",
+    parseFloat($('[data-start="final"]').textContent.replace(/[^\d.]/g, "")) >
+    parseFloat($('[data-start="test"]').textContent.replace(/[^\d.]/g, "")),
+    $('[data-start="final"]').textContent.trim());
+  check("экзамен закрыт до двух сданных контрольных", !$('[data-start="exam"]'));
+  click('[data-tab="shop"]');
   check("магазин закрыт до сдачи контрольной", !$('[data-grade]'));
+  click('[data-tab="prestige"]');
+  check("вкладка престижа закрыта до 100% сложности", !$('[data-prestige="1"]:not([disabled])'));
+  click('[data-tab="settings"]');
+  check("вкладка настроек открылась", !!$('[data-setting="speed_gauge"]'));
   click('[data-tab="upgrades"]');
   check("вернулись на улучшения", !!$('[data-buy="knots"]'));
+
+  // --- окно скорости ---
+  check("окно скорости видно", !$("#speedGauge").classList.contains("hidden"));
+  const fastW = $("#speedFast").style.width;
+  check("зелёная зона быстрого окна задана", parseFloat(fastW) > 0, fastW);
+  const markerBefore = parseFloat($("#speedMarker").style.left) || 0;
+  await new Promise((r) => setTimeout(r, 700));
+  const markerAfter = parseFloat($("#speedMarker").style.left) || 0;
+  check("маркер окна времени двигается", markerAfter > markerBefore,
+    `${markerBefore} -> ${markerAfter}`);
+
+  // --- настройка выключает окно ---
+  click('[data-tab="settings"]');
+  click('[data-setting="speed_gauge"]');
+  click('[data-tab="upgrades"]');
+  check("окно скорости выключается настройкой",
+    $("#speedGauge").classList.contains("hidden"));
+  click('[data-tab="settings"]');
+  click('[data-setting="speed_gauge"]');
+  click('[data-tab="upgrades"]');
+  check("окно скорости включается обратно",
+    !$("#speedGauge").classList.contains("hidden"));
 
   // --- клавиатура ---
   press("1"); press("2");
@@ -292,8 +323,9 @@ setTimeout(() => {
   window.dispatchEvent(new window.Event("beforeunload"));
   check("сохранение записано", !!window.localStorage.getItem("mathidle.save"));
   const save = JSON.parse(window.localStorage.getItem("mathidle.save"));
-  check("в сохранении деньги и уровни",
-    typeof save.money === "number" && !!save.base_levels && save.version === 1,
+  check("в сохранении деньги, уровни и престиж",
+    typeof save.money === "number" && !!save.base_levels && save.version === 2 &&
+    !!save.prestige_levels && !!save.ascensions,
     Object.keys(save).join(","));
 
   // --- сдача контрольной: подставляем состояние напрямую через перезапуск ---

@@ -44,7 +44,13 @@ KIND_COLORS = {
     "info": MUTED,
 }
 
-TABS = [("upgrades", "Улучшения"), ("test", "Контрольная"), ("shop", "Магазин")]
+TABS = [
+    ("upgrades", "Улучшения"),
+    ("test", "Проверки"),
+    ("prestige", "Престиж"),
+    ("shop", "Магазин"),
+    ("settings", "Настройки"),
+]
 
 KEYPAD = [["7", "8", "9"], ["4", "5", "6"], ["1", "2", "3"], ["-", "0", "del"]]
 
@@ -119,6 +125,15 @@ class GameUI:
         self.bg = self._make_background()
         self._pending = []          # события, ждущие отрисовки
         self._passive_milestone = 0  # сколько порогов пассивного дохода пройдено
+        # аккаунт
+        self._login_name = ""
+        self._login_pass = ""
+        self._account_error = ""
+        self._egg_shown = False
+        self._egg_dismissed = False
+        self._egg_shown_at = 0.0
+        # показывать ли поля ввода логина (в настройках отдалены предпочтениями)
+        self.focus_login_field = "name"
 
     # ------------------------------------------------------------------
     # Фон
@@ -183,6 +198,12 @@ class GameUI:
     # ------------------------------------------------------------------
     def on_key(self, event):
         st = self.state
+        # затемнение после «Femboy Futa house» перехватывает ввод
+        if st.easter_egg and not self._egg_dismissed:
+            if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE,
+                             pygame.K_SPACE):
+                self._egg_dismissed = True
+            return
         if self.modal and event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE,
                                          pygame.K_SPACE):
             self.modal = None
@@ -291,6 +312,9 @@ class GameUI:
 
     def on_click(self, pos):
         pos = self.scale_pos(pos, pygame.display.get_surface().get_size())
+        if self.state.easter_egg and not self._egg_dismissed:
+            self._egg_dismissed = True
+            return
         for button in self._pending:
             if button.enabled and button.rect.collidepoint(pos):
                 self.activate(button)
@@ -344,10 +368,12 @@ class GameUI:
         self.draw_floats(canvas)
         if self.modal:
             self.draw_modal(canvas)
-        if self.flash > 0:
+        if self.flash > 0 and self.state.setting("animations"):
             overlay = pygame.Surface((W, H), pygame.SRCALPHA)
             overlay.fill((*self.flash_color, int(70 * self.flash / 0.35)))
             canvas.blit(overlay, (0, 0))
+        if self.state.easter_egg and not self._egg_dismissed:
+            self.draw_easter_egg(canvas)
 
         win_w, win_h = window.get_size()
         scale = min(win_w / W, win_h / H)
@@ -355,6 +381,38 @@ class GameUI:
         window.fill(BG)
         window.blit(frame, ((win_w - frame.get_width()) // 2 + int(offset[0]),
                             (win_h - frame.get_height()) // 2 + int(offset[1])))
+
+    def draw_easter_egg(self, canvas):
+        """После покупки «Femboy Futa house» экран темнеет.
+
+        Закрывается по Enter, Esc или клику — иначе играть было бы нельзя.
+        """
+        st = self.state
+        veil = pygame.Surface((W, H), pygame.SRCALPHA)
+        veil.fill((4, 6, 12, 232))
+        canvas.blit(veil, (0, 0))
+
+        t = max(0.0, st.now - self._egg_shown_at) if self._egg_shown_at else 0.0
+        pulse = 0.75 + 0.25 * math.sin(st.now * 1.6)
+
+        card_w, card_h = 720, 260
+        card = pygame.Rect((W - card_w) // 2, (H - card_h) // 2, card_w, card_h)
+        pygame.draw.rect(canvas, (12, 14, 22), card, border_radius=20)
+        pygame.draw.rect(canvas, (*GOLD, int(140 * pulse)), card, width=3, border_radius=20)
+
+        title_font = self.fonts.get(34, bold=True)
+        body_font = self.fonts.get(17)
+        small_font = self.fonts.get(13)
+
+        def center(text, font, color, yy):
+            surf = font.render(text, True, color)
+            canvas.blit(surf, (card.centerx - surf.get_width() // 2, yy))
+
+        center("Femboy Futa house", title_font, GOLD, card.y + 34)
+        center("Куплено. Эффектов нет. Как и обещано.", body_font, TEXT, card.y + 96)
+        center("Ждите версии 1.3...", self.fonts.get(24, bold=True),
+               (*GOLD, int(255 * pulse)), card.y + 140)
+        center("Enter, Esc или клик — вернуться к игре", small_font, MUTED, card.bottom - 40)
 
     # ---------------- верхняя панель ----------------
     def draw_topbar(self, canvas):
@@ -412,10 +470,11 @@ class GameUI:
         pygame.draw.rect(canvas, PANEL, panel, border_radius=14)
 
         testing = st.test is not None
-        # заголовок панели
         head = self.fonts.get(15, bold=True)
         if testing:
-            title = f"Контрольная №{st.test['level']}  ·  пример {st.test['index'] + 1} из {len(st.test['problems'])}"
+            tt = economy.test_type(st.test["type"])
+            title = (f"{tt['name']} №{st.test['level']}  ·  пример "
+                     f"{st.test['index'] + 1} из {len(st.test['problems'])}")
             color = BLUE
         else:
             title = "Реши пример"
@@ -427,37 +486,30 @@ class GameUI:
         elif st.wants_hint():
             hint = self.fonts.get(15, bold=True)
             msg = "Шпаргалка"
-            canvas.blit(hint.render(msg, True, GOLD), (panel.right - 24 - hint.size(msg)[0], panel.y + 16))
+            canvas.blit(hint.render(msg, True, GOLD),
+                        (panel.right - 24 - hint.size(msg)[0], panel.y + 16))
 
-        # сам пример
+        # --- пример ---
         if st.current:
             age = max(0.0, st.now - st.shown_at)
             pop = min(1.0, age / 0.18)
-            size = int(56 * (0.92 + 0.08 * pop))
+            size = int(52 * (0.92 + 0.08 * pop))
             font = self.fonts.get(size, bold=True)
             text = st.current["text"] + " ="
             surf = font.render(text, True, TEXT)
-            rect = surf.get_rect(center=(panel.centerx, panel.y + 130))
+            rect = surf.get_rect(center=(panel.centerx, panel.y + 105))
             canvas.blit(surf, rect)
 
+            y = panel.y + 140
+            # окно скорости: движущаяся шкала ответа
+            if st.setting("speed_gauge"):
+                y = self.draw_speed_gauge(canvas, panel, y)
             # сложность примера
-            diff = st.current["difficulty"]
-            bar_w = 320
-            bar = pygame.Rect(panel.centerx - bar_w // 2, panel.y + 172, bar_w, 8)
-            pygame.draw.rect(canvas, LINE, bar, border_radius=4)
-            filled = max(1, int(bar_w * diff)) if diff > 0 else 0
-            if filled:
-                pygame.draw.rect(
-                    canvas, self._diff_color(diff),
-                    pygame.Rect(bar.x, bar.y, filled, bar.h), border_radius=4,
-                )
-            small = self.fonts.get(13)
-            label = f"сложность {int(diff * 100)}%"
-            canvas.blit(small.render(label, True, MUTED),
-                        (panel.centerx - small.size(label)[0] // 2, bar.bottom + 6))
+            if st.setting("difficulty_bar"):
+                y = self.draw_difficulty(canvas, panel, y)
 
         # поле ответа
-        box = pygame.Rect(panel.x + 24, panel.y + 205, panel.w - 48, 62)
+        box = pygame.Rect(panel.x + 24, panel.y + 225, panel.w - 48, 62)
         pygame.draw.rect(canvas, BG, box, border_radius=10)
         pygame.draw.rect(canvas, ACCENT if self.input else LINE, box, width=2, border_radius=10)
         shown = self.input if self.input else "…"
@@ -469,7 +521,7 @@ class GameUI:
             pygame.draw.rect(canvas, ACCENT, (caret, box.y + 16, 3, 30))
 
         # цифровая клавиатура
-        self.draw_keypad(canvas, pygame.Rect(panel.x + 24, panel.y + 285, panel.w - 48, 240))
+        self.draw_keypad(canvas, pygame.Rect(panel.x + 24, panel.y + 300, panel.w - 48, 225))
 
         hint = self.fonts.get(13)
         canvas.blit(
@@ -477,6 +529,67 @@ class GameUI:
                         True, (86, 96, 114)),
             (panel.x + 24, panel.bottom - 26),
         )
+
+    def draw_speed_gauge(self, canvas, panel, y):
+        """Окно скорости: зелёная зона «быстро», маркер едет вправо по мере времени.
+
+        Само окно двигается вместе с улучшениями «Скоростной бланк» и
+        «Вечный разгон» — видно, как оно растёт.
+        """
+        st = self.state
+        fast, slow = st.speed_window()
+        elapsed = max(0.0, st.now - st.shown_at)
+        span = max(slow * 1.25, 1.0)
+
+        track = pygame.Rect(panel.centerx - 170, y, 340, 12)
+        pygame.draw.rect(canvas, LINE, track, border_radius=6)
+
+        # зелёная зона быстрого окна
+        fast_w = int(track.w * min(1.0, fast / span))
+        if fast_w > 0:
+            pygame.draw.rect(
+                canvas, GREEN,
+                pygame.Rect(track.x, track.y, fast_w, track.h), border_radius=6,
+            )
+
+        # маркер текущего времени
+        pos = int(track.w * min(1.0, elapsed / span))
+        speed = st.speed_now()
+        marker_x = min(track.right - 3, track.x + pos)
+        marker = pygame.Rect(marker_x, track.y - 5, 6, track.h + 10)
+        pygame.draw.rect(canvas, TEXT, marker, border_radius=3)
+
+        small = self.fonts.get(12)
+        left = "быстро" + self._filler()
+        canvas.blit(small.render(left, True, GREEN), (track.x, track.y - 17))
+        right = f"медленно {elapsed:.1f}с"
+        canvas.blit(small.render(right, True, MUTED),
+                    (track.right - small.size(right)[0], track.y - 17))
+        mult = f"скорость ×{speed:.2f}"
+        width = small.size(mult)[0]
+        canvas.blit(small.render(mult, True, ACCENT if speed > 0.99 else GOLD),
+                    (panel.centerx - width // 2, track.bottom + 4))
+        return track.bottom + 28
+
+    def _filler(self):
+        """Пробелы-заполнитель не нужны; оставлено как точка расширения."""
+        return ""
+
+    def draw_difficulty(self, canvas, panel, y):
+        st = self.state
+        diff = st.current["difficulty"]
+        bar_w = 320
+        bar = pygame.Rect(panel.centerx - bar_w // 2, y, bar_w, 8)
+        pygame.draw.rect(canvas, LINE, bar, border_radius=4)
+        filled = max(1, int(bar_w * diff)) if diff > 0 else 0
+        if filled:
+            pygame.draw.rect(canvas, self._diff_color(diff),
+                             pygame.Rect(bar.x, bar.y, filled, bar.h), border_radius=4)
+        small = self.fonts.get(13)
+        label = f"сложность {int(diff * 100)}%"
+        canvas.blit(small.render(label, True, MUTED),
+                    (panel.centerx - small.size(label)[0] // 2, bar.bottom + 6))
+        return bar.bottom + 26
 
     def draw_timer(self, canvas, panel):
         st = self.state
@@ -542,19 +655,19 @@ class GameUI:
         st = self.state
 
         # вкладки
-        tw = (panel.w - 32) / 3
+        count = len(TABS)
+        gap = 6
+        tw = int((panel.w - 32 - gap * (count - 1)) / count)
         for i, (tid, title) in enumerate(TABS):
-            rect = pygame.Rect(panel.x + 16 + i * (tw + 0), panel.y + 14, int(tw - 6), 40)
-            rect.y = panel.y + 14
-            rect.x = panel.x + 16 + i * int(tw)
+            rect = pygame.Rect(panel.x + 16 + i * (tw + gap), panel.y + 14, tw, 40)
             active = self.tab == tid
-            locked = tid == "shop" and not st.shop_unlocked
+            locked = self._tab_locked(tid)
             pygame.draw.rect(canvas, PANEL_HI if active else BG, rect, border_radius=8)
             if active:
                 pygame.draw.rect(canvas, ACCENT, rect, width=2, border_radius=8)
-            font = self.fonts.get(17, bold=True)
+            font = self.fonts.get(15, bold=True)
             if locked:
-                surf = font.render(title + " (закрыто)", True, (96, 106, 124))
+                surf = font.render(title, True, (96, 106, 124))
             else:
                 surf = font.render(title, True, TEXT if active else MUTED)
             canvas.blit(surf, surf.get_rect(center=rect.center))
@@ -568,11 +681,23 @@ class GameUI:
             self.draw_tab_upgrades(canvas, body)
         elif self.tab == "test":
             self.draw_tab_test(canvas, body)
+        elif self.tab == "prestige":
+            self.draw_tab_prestige(canvas, body)
+        elif self.tab == "settings":
+            self.draw_tab_settings(canvas, body)
         else:
             self.draw_tab_shop(canvas, body)
 
+    def _tab_locked(self, tid):
+        st = self.state
+        if tid == "shop" and not st.shop_unlocked:
+            return True
+        if tid == "prestige" and st.prestige_count == 0 and not st.prestige_unlocked():
+            return True
+        return False
+
     def set_tab(self, tab):
-        if tab == "shop" and not self.state.shop_unlocked:
+        if self._tab_locked(tab):
             return
         self.tab = tab
 
@@ -589,7 +714,8 @@ class GameUI:
 
     def draw_tab_upgrades(self, canvas, rect):
         st = self.state
-        self._scroll_area(canvas, rect, 10 + len(config.BASE_UPGRADES) * 96 + 70)
+        cards = len(config.BASE_UPGRADES) * 122
+        self._scroll_area(canvas, rect, 10 + cards + 80)
         y = rect.y - self.scroll[self.tab]
 
         info = self.fonts.get(13)
@@ -620,26 +746,48 @@ class GameUI:
             maxl = st.upgrade_max_level(up["id"])
             full = st.upgrade_full(up["id"])
             cost = st.upgrade_cost(up["id"])
-            card = pygame.Rect(rect.x, y, rect.w, 84)
+            asc = st.ascensions.get(up["id"], 0)
+
+            card = pygame.Rect(rect.x, y, rect.w, 78)
             enabled = (not full) and st.money >= cost
             title = up["name"]
+            rate_txt = up["rate_per_level"] * (2 ** asc)
             if full:
-                subtitle = f"максимум {up['max_rate']} примера/с"
+                subtitle = f"максимум, вознесений: {asc}" if asc else "максимум улучшения"
             else:
-                subtitle = (f"+{up['rate_per_level']} примера/с   ·   ур. {level}/{maxl}   ·   "
+                subtitle = (f"+{rate_txt:g} примера/с   ·   ур. {level}/{maxl}   ·   "
                             f"цена: {economy.fmt_money(cost)}")
-            btn = Button(card, title, subtitle, ACCENT if enabled else GOLD,
-                         enabled, "" if full else economy.fmt_money(cost))
+            badge = "" if full else economy.fmt_money(cost)
+            if asc:
+                badge = (badge + "  ×" + str(2 ** asc)).strip()
+            btn = Button(card, title, subtitle, ACCENT if enabled else GOLD, enabled, badge)
             btn.action = (lambda u=up["id"]: self.do_buy_upgrade(u))
             btn.draw(canvas, self.fonts)
             self._pending.append(btn)
 
-            # полоса прогресса скорости
-            bar = pygame.Rect(card.x + 14, card.bottom - 12, card.w - 28, 5)
+            # полоса прогресса: с учётом вознесений максимум выше базового
+            bar = pygame.Rect(card.x + 14, card.bottom - 10, card.w - 28, 5)
+            max_rate = up["max_rate"] * (2 ** asc)
             pygame.draw.rect(canvas, LINE, bar, border_radius=2)
-            filled = int(bar.w * (st.upgrade_rate(up["id"]) / up["max_rate"]))
+            filled = int(bar.w * min(1.0, st.upgrade_rate(up["id"]) / max_rate))
             pygame.draw.rect(canvas, ACCENT, (bar.x, bar.y, filled, bar.h), border_radius=2)
-            y += 96
+            y += 84
+
+            # кнопка вознесения
+            if asc or st.prestige_count >= config.ASCENSION["unlock_after_prestige"]:
+                asc_btn = pygame.Rect(card.x, y, card.w, 34)
+                can = st.can_ascend(up["id"])
+                if not st.upgrade_full(up["id"]):
+                    label = f"Вознести (нужен максимум, осталось {maxl - level})"
+                else:
+                    label = (f"Вознести: уровень → 0, скорость ×{2 ** (asc + 1)}, "
+                             f"цена ×{4 ** (asc + 1)}")
+                btn = Button(asc_btn, label, "", VIOLET, can)
+                btn.action = (lambda u=up["id"]: self.do_ascend(u))
+                btn.draw(canvas, self.fonts)
+                self._pending.append(btn)
+                y += 40
+            y += 6
 
         # кнопка «купить максимум»
         card = pygame.Rect(rect.x, y + 6, rect.w, 56)
@@ -656,6 +804,14 @@ class GameUI:
         else:
             self.state.log(message, "fail", ttl=2.0)
 
+    def do_ascend(self, up_id):
+        ok, message = self.state.ascend(up_id)
+        if ok:
+            self.flash, self.flash_color = 0.3, VIOLET
+            self.state.next_problem()
+        else:
+            self.state.log(message, "fail", ttl=2.5)
+
     def do_buy_all(self):
         bought, spent = self.state.buy_all_upgrades()
         if not bought:
@@ -665,76 +821,101 @@ class GameUI:
 
     def draw_tab_test(self, canvas, rect):
         st = self.state
-        self._scroll_area(canvas, rect, 430)
+        available = st.test_types_available()
+        self._scroll_area(canvas, rect, 150 + len(available) * 242 + 190)
         y = rect.y - self.scroll[self.tab]
-        big = self.fonts.get(24, bold=True)
+        big = self.fonts.get(21, bold=True)
         body = self.fonts.get(15)
         small = self.fonts.get(13)
 
+        if st.test:
+            y = self.draw_test_running(canvas, rect, y, big, body)
+        else:
+            for tt in available:
+                y = self.draw_test_offer(canvas, rect, y, tt, big, body, small)
+            y += 6
+
+        note = [
+            "Правила проверок:",
+            "• ни одной ошибки, иначе провал (билет возвращается)",
+            "• не уложишься во время — тоже провал",
+            "• сдаёшь — награда и следующий уровень",
+            "",
+            "В обычной контрольной встречаются две СЛУЧАЙНЫЕ открытые операции.",
+            "Итоговая и экзамен — все операции разом.",
+        ]
+        for i, line in enumerate(note):
+            canvas.blit(body.render(line, True, TEXT if i == 0 else MUTED),
+                        (rect.x + 4, y + i * 21))
+        canvas.set_clip(None)
+
+    def draw_test_running(self, canvas, rect, y, big, body):
+        """Карточка идущей проверки."""
+        st = self.state
+        test = st.test
+        tt = economy.test_type(test["type"])
         card = pygame.Rect(rect.x, y, rect.w, 190)
         pygame.draw.rect(canvas, BG, card, border_radius=12)
         pygame.draw.rect(canvas, BLUE, card, width=2, border_radius=12)
         y = card.y + 16
+        canvas.blit(big.render(f"{tt['name']} №{test['level']} идёт", True, BLUE), (card.x + 16, y))
+        y += 38
+        ops = ", ".join(config.operation(o)["name"] for o in test["ops"])
+        for line in [
+            f"Пример {test['index'] + 1} из {len(test['problems'])}",
+            f"Темы: {ops}",
+            f"Осталось: {economy.fmt_time(test['limit'] - test['elapsed'])}",
+            f"Награда: {economy.fmt_money(economy.test_reward(test['level'], test['type']))}",
+        ]:
+            canvas.blit(body.render(line, True, TEXT), (card.x + 16, y))
+            y += 25
+        y += 8
+        btn = Button(pygame.Rect(card.x + 16, y, 220, 46), "Прервать", "вернуть билет", RED, True)
+        btn.action = self.do_abort_test
+        btn.draw(canvas, self.fonts)
+        self._pending.append(btn)
+        return card.bottom + 16
 
-        if st.test:
-            test = st.test
-            canvas.blit(big.render(f"Контрольная №{test['level']} идёт", True, BLUE), (card.x + 16, y))
-            y += 40
-            for line in [
-                f"Пример {test['index'] + 1} из {len(test['problems'])}",
-                f"Осталось: {economy.fmt_time(test['limit'] - test['elapsed'])}",
-                f"Награда: {economy.fmt_money(economy.test_reward(test['level']))}",
-            ]:
-                canvas.blit(body.render(line, True, TEXT), (card.x + 16, y))
-                y += 26
-            y += 6
-            btn = Button(pygame.Rect(card.x + 16, y, 220, 48), "Прервать", "вернуть билет", RED, True)
-            btn.action = self.do_abort_test
-            btn.draw(canvas, self.fonts)
-            self._pending.append(btn)
-            y = card.bottom + 16
-        else:
-            canvas.blit(big.render("Контрольная", True, BLUE), (card.x + 16, y))
-            y += 38
-            level = st.test_level
-            lines = [
-                f"Билет: {economy.fmt_money(config.TEST['entry_price'])}",
-                f"Примеров: {economy.test_problem_count(level)}",
-                f"Сложность: {int(economy.test_difficulty(level) * 100)}%",
-                f"Время: {economy.fmt_time(economy.test_time_limit(level, st.grade_levels))}",
-                f"Награда: {economy.fmt_money(economy.test_reward(level))}",
-                f"Пройдено: {st.tests_passed}",
-            ]
-            for line in lines:
-                canvas.blit(body.render(line, True, TEXT), (card.x + 16, y))
-                y += 25
-            y += 8
-            can = st.can_start_test()
-            label = "Начать контрольную" if can else f"Нужно {economy.fmt_money(config.TEST['entry_price'])}"
-            btn = Button(pygame.Rect(card.x + 16, y, 240, 46), label, "", GREEN, can)
-            btn.action = self.do_start_test
-            btn.draw(canvas, self.fonts)
-            self._pending.append(btn)
-            y = card.bottom + 20
+    def draw_test_offer(self, canvas, rect, y, tt, big, body, small):
+        """Карточка одного вида проверки с ценой и кнопкой."""
+        st = self.state
+        kind = tt["id"]
+        level = st.test_level
+        price = economy.test_price(kind)
+        can = st.can_start_test(kind)
+        colors = {"test": BLUE, "final": GOLD, "exam": VIOLET}
+        accent = colors.get(kind, BLUE)
 
-        note = [
-            "Правила контрольной:",
-            "• ни одной ошибки, иначе провал (билет возвращается)",
-            "• не уложишься во время — тоже провал",
-            "• сдаёшь — получаешь награду и следующий уровень",
-            "",
-            "После первой сданной контрольной открывается",
-            "магазин контрольных улучшений: множители денег,",
-            "более широкое окно скорости и новые действия.",
-        ]
-        for i, line in enumerate(note):
-            color = MUTED if i else TEXT
-            font = body if i == 0 else small
-            canvas.blit(font.render(line, True, color), (rect.x + 4, y + i * 21))
-        canvas.set_clip(None)
+        card = pygame.Rect(rect.x, y, rect.w, 228)
+        pygame.draw.rect(canvas, BG, card, border_radius=12)
+        pygame.draw.rect(canvas, accent if can else LINE, card, width=2, border_radius=12)
 
-    def do_start_test(self):
-        ok, message = self.state.start_test()
+        y2 = card.y + 14
+        canvas.blit(big.render(tt["name"], True, accent if can else MUTED), (card.x + 16, y2))
+        y2 += 30
+        canvas.blit(small.render(tt["desc"], True, MUTED), (card.x + 16, y2))
+        y2 += 26
+
+        count = economy.test_problem_count(level, kind)
+        diff = int(economy.test_difficulty(level, kind, st.prestige_levels) * 100)
+        for line in [
+            f"Билет: {economy.fmt_money(price)}",
+            f"Примеров: {count}   ·   Сложность: {diff}%",
+            f"Время: {economy.fmt_time(economy.test_time_limit(level, st.grade_levels, kind, st.prestige_levels))}",
+            f"Награда: {economy.fmt_money(economy.test_reward(level, kind))}",
+        ]:
+            canvas.blit(body.render(line, True, TEXT), (card.x + 16, y2))
+            y2 += 24
+
+        label = f"Начать · {economy.fmt_money(price)}" if can else f"Нужно {economy.fmt_money(price)}"
+        btn = Button(pygame.Rect(card.x + 16, y2 + 4, 230, 42), label, "", accent, can)
+        btn.action = (lambda k=kind: self.do_start_test(k))
+        btn.draw(canvas, self.fonts)
+        self._pending.append(btn)
+        return card.bottom + 14
+
+    def do_start_test(self, kind="test"):
+        ok, message = self.state.start_test(kind)
         if ok:
             self.input = ""
             self.tab = "upgrades"
@@ -745,6 +926,259 @@ class GameUI:
         result = self.state.abort_test()
         if result:
             self.modal = self._result_modal(result)
+
+    # ---------------- Престиж ----------------
+    def draw_tab_prestige(self, canvas, rect):
+        st = self.state
+        self._scroll_area(canvas, rect, 300 + len(config.PRESTIGE_ITEMS) * 92 + 60)
+        y = rect.y - self.scroll[self.tab]
+        big = self.fonts.get(21, bold=True)
+        body = self.fonts.get(15)
+        small = self.fonts.get(13)
+
+        card = pygame.Rect(rect.x, y, rect.w, 250)
+        unlocked = st.prestige_unlocked()
+        accent = GOLD if unlocked else MUTED
+        pygame.draw.rect(canvas, BG, card, border_radius=12)
+        pygame.draw.rect(canvas, accent if unlocked else LINE, card, width=2, border_radius=12)
+
+        y = card.y + 14
+        canvas.blit(big.render(f"Престиж #{st.prestige_count + 1}", True, accent),
+                    (card.x + 16, y))
+        y += 32
+        canvas.blit(
+            body.render(
+                f"Очков престижа: {economy.fmt_money(st.prestige_points)}"
+                f"   ·   набежит: +{economy.fmt_money(st.pending_prestige_points())}",
+                True, GOLD if st.prestige_points > 0 else TEXT,
+            ),
+            (card.x + 16, y),
+        )
+        y += 26
+        canvas.blit(
+            small.render(
+                f"Курс: 1 деньга = {config.PRESTIGE['points_per_money']} очка престижа",
+                True, MUTED),
+            (card.x + 16, y),
+        )
+        y += 30
+
+        for label, ok in self._prestige_requirements(st):
+            canvas.blit(small.render(("[x] " if ok else "[ ] ") + label,
+                                     True, GREEN if ok else MUTED), (card.x + 16, y))
+            y += 21
+
+        y += 8
+        for line in [
+            "Престиж обнуляет: деньги, обычные улучшения,",
+            "контрольные улучшения и вознесения.",
+            "Открытые операции (вычитание, деление и т.д.) остаются.",
+        ]:
+            canvas.blit(small.render(line, True, MUTED), (card.x + 16, y))
+            y += 19
+
+        y = card.bottom + 12
+        label = "СДЕЛАТЬ ПРЕСТИЖ" if unlocked else st.prestige_blocked_reason()
+        btn = Button(pygame.Rect(rect.x, y, rect.w, 48), label, "", GOLD, unlocked)
+        btn.action = self.do_prestige
+        btn.draw(canvas, self.fonts)
+        self._pending.append(btn)
+        y += 62
+
+        if not st.prestige_shop_unlocked:
+            canvas.blit(
+                small.render("Магазин престижных улучшений откроется после первого престижа.",
+                             True, MUTED),
+                (rect.x + 4, y),
+            )
+            canvas.set_clip(None)
+            return
+
+        canvas.blit(body.render("Престижные улучшения", True, VIOLET), (rect.x + 4, y))
+        y += 26
+        for item in config.PRESTIGE_ITEMS:
+            y = self.draw_prestige_item(canvas, rect, y, item, small)
+
+        canvas.blit(
+            small.render("«Femboy Futa house» — самая дорогая прокачка, без эффектов.",
+                         True, GOLD),
+            (rect.x + 4, y + 6),
+        )
+        canvas.set_clip(None)
+
+    def _prestige_requirements(self, st):
+        """Требования престижа с отметками выполнения."""
+        need = config.PRESTIGE["required_difficulty"]
+        return [
+            (f"Решить пример сложности {int(need * 100)}% "
+             f"(сейчас {int(st.max_difficulty_solved * 100)}%)",
+             st.max_difficulty_solved >= need),
+            (f"Заработать деньги в этом забеге ({economy.fmt_money(st.run_earned)})",
+             st.run_earned > 0),
+        ]
+
+    def draw_prestige_item(self, canvas, rect, y, item, small):
+        st = self.state
+        level = st.prestige_level(item["id"])
+        full = st.prestige_full(item["id"])
+        cost = st.prestige_cost(item["id"])
+        affordable = (not full) and st.prestige_points >= cost
+
+        if item.get("easter_egg"):
+            card = pygame.Rect(rect.x, y, rect.w, 104)
+            btn = Button(card, item["name"], item["desc"], GOLD, affordable,
+                         "ЕСТЬ" if full else economy.fmt_money(cost))
+            btn.action = (lambda i=item["id"]: self.do_buy_prestige(i))
+            btn.draw(canvas, self.fonts)
+            self._pending.append(btn)
+            sale = "сейчас действует скидка 15%"
+            canvas.blit(small.render(sale, True, GREEN if full else RED),
+                        (card.x + 14, card.bottom - 26))
+            base_txt = f"полная цена {economy.fmt_money(item['price'])}"
+            canvas.blit(small.render(base_txt, True, MUTED),
+                        (card.right - 14 - small.size(base_txt)[0], card.bottom - 26))
+            return card.bottom + 8
+
+        if full:
+            subtitle = f"максимум (ур. {item['max_level']}) · {item['desc']}"
+        else:
+            subtitle = f"ур. {level}/{item['max_level']} · {item['desc']}"
+        card = pygame.Rect(rect.x, y, rect.w, 78)
+        btn = Button(card, item["name"], subtitle, VIOLET, affordable,
+                     "МАКС" if full else economy.fmt_money(cost))
+        btn.action = (lambda i=item["id"]: self.do_buy_prestige(i))
+        btn.draw(canvas, self.fonts)
+        self._pending.append(btn)
+        return card.bottom + 8
+
+    def do_prestige(self):
+        ok, message = self.state.do_prestige()
+        if ok:
+            self.flash, self.flash_color = 0.35, GOLD
+            self.input = ""
+            self.state.next_problem()
+        else:
+            self.state.log(message, "fail", ttl=3.0)
+
+    def do_buy_prestige(self, item_id):
+        ok, message = self.state.buy_prestige(item_id)
+        if ok:
+            self.flash, self.flash_color = 0.3, GOLD
+            if self.state.easter_egg and not self._egg_shown:
+                self._egg_shown = True
+                self._egg_dismissed = False
+                self._egg_shown_at = self.state.now
+        else:
+            self.state.log(message, "fail", ttl=2.5)
+
+    # ---------------- Настройки ----------------
+    def draw_tab_settings(self, canvas, rect):
+        st = self.state
+        self._scroll_area(canvas, rect, 60 + len(config.DISPLAY_SETTINGS) * 52 + 300)
+        y = rect.y - self.scroll[self.tab]
+        body = self.fonts.get(15)
+        small = self.fonts.get(13)
+
+        canvas.blit(body.render("Отображение", True, TEXT), (rect.x + 4, y))
+        y += 28
+        for item in config.DISPLAY_SETTINGS:
+            card = pygame.Rect(rect.x, y, rect.w, 44)
+            on = st.setting(item["id"])
+            pygame.draw.rect(canvas, BG, card, border_radius=9)
+            pygame.draw.rect(canvas, ACCENT if on else LINE, card, width=2, border_radius=9)
+            mark = "ВКЛ" if on else "ВЫКЛ"
+            mark_color = ACCENT if on else MUTED
+            chip = pygame.Rect(card.right - 74, card.y + 9, 62, 26)
+            pygame.draw.rect(canvas, mark_color, chip, border_radius=13)
+            mark_font = self.fonts.get(13, bold=True)
+            canvas.blit(mark_font.render(mark, True, BG),
+                        (chip.x + (chip.w - mark_font.size(mark)[0]) // 2, chip.y + 5))
+            canvas.blit(body.render(item["name"], True, TEXT), (card.x + 14, card.y + 6))
+            canvas.blit(small.render(item["desc"], True, MUTED), (card.x + 14, card.y + 25))
+            btn = Button(card, item["name"])
+            btn.enabled = True
+            btn.action = (lambda i=item["id"]: self.toggle_setting(i))
+            self._pending.append(btn)
+            y += 50
+
+        y += 12
+        canvas.blit(body.render("Аккаунт", True, TEXT), (rect.x + 4, y))
+        y += 26
+        if st.account.signed_in:
+            canvas.blit(
+                small.render(f"Вы вошли как {st.account_username} · прогресс синхронизируется",
+                             True, GREEN), (rect.x + 4, y))
+            y += 22
+            canvas.blit(small.render(f"Сервер: {st.account.status()}", True, MUTED),
+                        (rect.x + 4, y))
+            y += 26
+            btn = Button(pygame.Rect(rect.x, y, 240, 44), "Выйти",
+                         "прогресс останется тут", RED, True)
+            btn.action = self.do_sign_out
+            btn.draw(canvas, self.fonts)
+            self._pending.append(btn)
+            canvas.set_clip(None)
+            return
+
+        canvas.blit(
+            small.render("Войди, чтобы прогресс хранился на сервере, а не на устройстве",
+                         True, MUTED), (rect.x + 4, y))
+        y += 24
+        if st.account.last_error:
+            canvas.blit(small.render("сервер: " + st.account.last_error[:60], True, RED),
+                        (rect.x + 4, y))
+            y += 20
+        if self._account_error:
+            canvas.blit(small.render(self._account_error, True, RED), (rect.x + 4, y))
+            y += 22
+
+        field_w = (rect.w - 10) // 2
+        name_rect = pygame.Rect(rect.x, y, field_w, 40)
+        pass_rect = pygame.Rect(rect.x + field_w + 10, y, field_w, 40)
+        pygame.draw.rect(canvas, BG, name_rect, border_radius=8)
+        pygame.draw.rect(canvas, LINE, name_rect, width=2, border_radius=8)
+        pygame.draw.rect(canvas, BG, pass_rect, border_radius=8)
+        pygame.draw.rect(canvas, LINE, pass_rect, width=2, border_radius=8)
+        canvas.blit(body.render(self._login_name or "имя игрока",
+                                True, TEXT if self._login_name else MUTED),
+                    (name_rect.x + 10, name_rect.y + 11))
+        pass_text = "•" * len(self._login_pass) if self._login_pass else "пароль"
+        canvas.blit(body.render(pass_text, True, TEXT if self._login_pass else MUTED),
+                    (pass_rect.x + 10, pass_rect.y + 11))
+        y += 48
+        btn = Button(pygame.Rect(rect.x, y, field_w, 42), "Войти", "", ACCENT, True)
+        btn.action = self.do_login
+        btn.draw(canvas, self.fonts)
+        self._pending.append(btn)
+        btn = Button(pygame.Rect(rect.x + field_w + 10, y, field_w, 42),
+                     "Регистрация", "", BLUE, True)
+        btn.action = self.do_register
+        btn.draw(canvas, self.fonts)
+        self._pending.append(btn)
+        canvas.set_clip(None)
+
+    def toggle_setting(self, setting_id):
+        st = self.state
+        st.settings[setting_id] = not st.setting(setting_id)
+        st.log("Анимации " + ("включены" if st.setting("animations") else "выключены"))
+
+    def do_login(self):
+        ok, message = self.state.sign_in(self._login_name, self._login_pass)
+        self._account_error = "" if ok else message
+        if ok:
+            st = self.state
+            st.log(message, "unlock")
+
+    def do_register(self):
+        ok, message = self.state.register(self._login_name, self._login_pass)
+        self._account_error = "" if ok else message
+        if ok:
+            self.state.log(message, "unlock")
+
+    def do_sign_out(self):
+        self.state.sign_out()
+        self._login_name = ""
+        self._login_pass = ""
 
     def draw_tab_shop(self, canvas, rect):
         st = self.state

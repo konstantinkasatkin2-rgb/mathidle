@@ -2,7 +2,7 @@
  * Пересобрать: python tools/export_balance.py
  */
 var MATHIDLE_BALANCE = {
- "version": "1.1.0",
+ "version": "1.2.0",
  "title": "Math Idle",
  "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
  "base_upgrades": [
@@ -82,6 +82,16 @@ var MATHIDLE_BALANCE = {
    "price": 2000,
    "unlock_id": "unlock_expr",
    "max_terms": 5
+  },
+  {
+   "id": "mix",
+   "name": "Смешанные примеры",
+   "symbol": "±",
+   "cap": 0.2,
+   "price": null,
+   "unlock_id": null,
+   "max_terms": 3,
+   "mixed": true
   }
  ],
  "grade_items": [
@@ -200,6 +210,184 @@ var MATHIDLE_BALANCE = {
    "growth": 1.0
   }
  ],
+ "prestige_items": [
+  {
+   "id": "pf_gain",
+   "name": "Жажда знаний",
+   "desc": "+20% к очкам престижа",
+   "effect": "prestige_gain",
+   "per_level": 0.2,
+   "max_level": 6,
+   "price": 0.1,
+   "step": 0.1
+  },
+  {
+   "id": "pf_window",
+   "name": "Вечный разгон",
+   "desc": "+25% к окну скорости",
+   "effect": "speed_window",
+   "per_level": 0.25,
+   "max_level": 5,
+   "price": 0.15,
+   "step": 0.15
+  },
+  {
+   "id": "pf_passive",
+   "name": "Фоновый доход",
+   "desc": "+50% к пассивному доходу",
+   "effect": "passive_share",
+   "per_level": 0.5,
+   "max_level": 5,
+   "price": 0.15,
+   "step": 0.15
+  },
+  {
+   "id": "pf_purse",
+   "name": "Непустой карман",
+   "desc": "Сохраняет 10% денег при престиже",
+   "effect": "keep_money",
+   "per_level": 0.1,
+   "max_level": 5,
+   "price": 0.2,
+   "step": 0.2
+  },
+  {
+   "id": "pf_diff",
+   "name": "Сложные билеты",
+   "desc": "+5% к сложности контрольных",
+   "effect": "test_difficulty",
+   "per_level": 0.05,
+   "max_level": 4,
+   "price": 0.3,
+   "step": 0.3
+  },
+  {
+   "id": "pf_time",
+   "name": "Дополнительное время",
+   "desc": "+10% к лимиту времени на контрольных",
+   "effect": "test_time",
+   "per_level": 0.1,
+   "max_level": 4,
+   "price": 0.25,
+   "step": 0.25
+  },
+  {
+   "id": "pf_money",
+   "name": "Престижная жадность",
+   "desc": "+50% к деньгам за пример",
+   "effect": "money_mult",
+   "per_level": 0.5,
+   "max_level": 3,
+   "price": 0.4,
+   "step": 0.4
+  },
+  {
+   "id": "femboy_futa_house",
+   "name": "Femboy Futa house",
+   "desc": "Без эффектов. Просто красиво.",
+   "effect": "none",
+   "per_level": 0,
+   "max_level": 1,
+   "price": 7.21,
+   "step": 0.0,
+   "discount": 0.15,
+   "easter_egg": true
+  }
+ ],
+ "prestige": {
+  "points_per_money": 0.01,
+  "required_difficulty": 1.0,
+  "keep_operations": true,
+  "keep_test_level": true,
+  "unlock_mixed_on_first": true
+ },
+ "ascension": {
+  "rate_multiplier": 2.0,
+  "cost_multiplier": 4.0,
+  "unlock_after_prestige": 1
+ },
+ "test_types": [
+  {
+   "id": "test",
+   "name": "Контрольная",
+   "desc": "Две случайные открытые операции",
+   "price": 10,
+   "ops_mode": "two",
+   "diff_bonus": 0.0,
+   "problems_mult": 1.0,
+   "time_mult": 1.0,
+   "reward_mult": 1.0,
+   "unlock_after": 0
+  },
+  {
+   "id": "final",
+   "name": "Итоговая контрольная",
+   "desc": "Все открытые операции, чуть сложнее, награда выше",
+   "price": 150,
+   "ops_mode": "all",
+   "diff_bonus": 0.1,
+   "problems_mult": 1.25,
+   "time_mult": 1.3,
+   "reward_mult": 4.0,
+   "unlock_after": 0
+  },
+  {
+   "id": "exam",
+   "name": "Экзамен",
+   "desc": "Все темы разом, самый высокий уровень и награда",
+   "price": 1500,
+   "ops_mode": "all_plus_mix",
+   "diff_bonus": 0.22,
+   "problems_mult": 1.5,
+   "time_mult": 1.6,
+   "reward_mult": 12.0,
+   "unlock_after": 2
+  }
+ ],
+ "display_settings": [
+  {
+   "id": "speed_gauge",
+   "name": "Окно скорости",
+   "desc": "Движущаяся шкала времени ответа",
+   "default": true
+  },
+  {
+   "id": "difficulty_bar",
+   "name": "Полоса сложности",
+   "desc": "Насколько трудный текущий пример",
+   "default": true
+  },
+  {
+   "id": "event_log",
+   "name": "Журнал событий",
+   "desc": "Сообщения о покупках и контрольных",
+   "default": true
+  },
+  {
+   "id": "passive_counter",
+   "name": "Счётчик пассива",
+   "desc": "Сколько заработано пассивно за сессию",
+   "default": true
+  },
+  {
+   "id": "animations",
+   "name": "Анимации",
+   "desc": "Всплывающие тексты и мигание",
+   "default": true
+  },
+  {
+   "id": "big_text",
+   "name": "Крупный текст",
+   "desc": "Интерфейс на 15% крупнее",
+   "default": false
+  },
+  {
+   "id": "precise_money",
+   "name": "Точные деньги",
+   "desc": "Показывать 4 знака вместо 3",
+   "default": false
+  }
+ ],
  "rewards": {
   "fast_window": 1.6,
   "slow_window": 8.0,
@@ -230,10 +418,20 @@ var MATHIDLE_BALANCE = {
   "cap_hours": 8.0,
   "efficiency": 1.0
  },
+ "account": {
+  "enabled": true,
+  "default_url": "",
+  "fallback_ports": [
+   8766,
+   8000
+  ],
+  "autosync_seconds": 20.0,
+  "session_token_days": 30
+ },
  "game": {
   "title": "Math Idle",
   "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "window": [
    1280,
    760

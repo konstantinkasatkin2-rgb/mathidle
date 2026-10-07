@@ -96,12 +96,66 @@ def _gen_expr(rng, diff, cfg):
     return body, total
 
 
+def _gen_mix(rng, diff, cfg):
+    """Смешанный пример: два и более РАЗНЫХ действия в одной строке.
+
+    Пример собирается из «кусков»: первый идёт без знака, остальные с «+» или
+    «−». Каждый кусок — законченное выражение («7», «3 × 4», «12 ÷ 3»), поэтому
+    «6 × 5 + 7 × 2» считается как 30 + 14, а не как случайная цепочка.
+    """
+    hi_small = max(5, int(round(5 + 15 * diff)))     # числа для сложения/вычитания
+    hi_big = max(4, int(round(4 + 9 * diff)))        # числа для умножения/деления
+
+    chunks = []          # (знак, текст, значение)
+
+    def add(sign, text, value):
+        chunks.append((sign, text, value))
+
+    def piece_plus():
+        n = rng.randint(1, hi_small + 4)
+        add("+", str(n), n)
+
+    def piece_minus():
+        """Вычитание: если уйти в минус нельзя, становится сложением."""
+        n = rng.randint(1, hi_small + 4)
+        running = sum(v if s == "+" else -v for s, _t, v in chunks)
+        sign = "-" if running - n >= 0 else "+"
+        add(sign, str(n), n)
+
+    def piece_mul():
+        a, b = rng.randint(2, hi_big), rng.randint(2, hi_big)
+        add("+", f"{a} × {b}", a * b)
+
+    def piece_div():
+        b = rng.randint(2, max(3, hi_big))
+        q = rng.randint(2, max(3, hi_big + 2))
+        add("+", f"{b * q} ÷ {b}", q)
+
+    # умножение и деление видны в строке всегда, поэтому два разных действия
+    # гарантированы, если начать с них
+    order = [piece_mul, piece_div] if rng.random() < 0.5 else [piece_div, piece_mul]
+    count = 2 if diff < 0.6 else (3 if diff < 0.85 else 4)
+    if count > 2:
+        order.append(piece_plus)
+    if count > 3:
+        order.append(piece_minus if rng.random() < 0.5 else piece_plus)
+    rng.shuffle(order)
+
+    for maker in order:
+        maker()
+
+    text = chunks[0][1] + "".join(f" {s} {t}" for s, t, _v in chunks[1:])
+    total = sum(v if s == "+" else -v for s, _t, v in chunks)
+    return text, total
+
+
 _GENERATORS = {
     "add": _gen_add,
     "sub": _gen_sub,
     "mul": _gen_mul,
     "div": _gen_div,
     "expr": _gen_expr,
+    "mix": _gen_mix,
 }
 
 
@@ -120,3 +174,27 @@ def random_problem(op_ids, difficulty=0.3, rng=None):
     if not op_ids:
         op_ids = ["add"]
     return generate(rng.choice(list(op_ids)), difficulty, rng)
+
+
+def test_problems_for(test_type_id, op_ids, difficulty, count, rng=None):
+    """Набор примеров для контрольной.
+
+    Обычная контрольная — две СЛУЧАЙНЫЕ открытые операции на всю работу,
+    чтобы игрок не угадывал одну и ту же тему. Итоговая и экзамен — все
+    операции разом.
+    """
+    rng = rng or random
+    tt = config.TEST_TYPES[[t["id"] for t in config.TEST_TYPES].index(test_type_id)]
+    pool = list(op_ids) or ["add"]
+
+    mode = tt["ops_mode"]
+    if mode == "two" and len(pool) > 1:
+        picked = rng.sample(pool, 2)
+    else:
+        picked = pool
+
+    out = []
+    for _ in range(count):
+        op = rng.choice(picked)
+        out.append(generate(op, difficulty, rng))
+    return out, picked

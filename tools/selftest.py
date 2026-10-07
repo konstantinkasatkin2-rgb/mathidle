@@ -4,6 +4,7 @@
 """
 
 import os
+import re
 import random
 import sys
 
@@ -15,6 +16,7 @@ try:  # консоль Windows по умолчанию cp1251 — принуди
 except (AttributeError, ValueError):  # pragma: no cover
     pass
 
+from mathidle import account as account_mod  # noqa: E402
 from mathidle import config, economy, problems, state  # noqa: E402
 
 FAILS = []
@@ -205,13 +207,238 @@ def test_upgrade_ladder():
           f"{economy.fmt_money(st.passive_rate() * st.passive_reward_per_example())}/с")
 
 
+def evaluate_expression(text):
+    """Независимый вычислитель примера со старшинством операций.
+
+    Сначала выполняет × и ÷, потом складывает и вычитает слева направо.
+    Используется только в тестах — чтобы проверить ответ генератора.
+    """
+    normalized = text.replace("×", "*").replace("÷", "/")
+    numbers, ops = [], []
+    for token in re.findall(r"\d+|[+\-*/]", normalized):
+        if token in "+-*/":
+            ops.append(token)
+        else:
+            numbers.append(int(token))
+
+    # сначала умножение и деление
+    i = 0
+    while i < len(ops):
+        if ops[i] in "*/":
+            left, right = numbers[i], numbers[i + 1]
+            numbers[i:i + 2] = [left * right if ops[i] == "*" else left // right]
+            ops.pop(i)
+        else:
+            i += 1
+    # затем сложение и вычитание
+    result = numbers[0]
+    for i, op in enumerate(ops):
+        result = result + numbers[i + 1] if op == "+" else result - numbers[i + 1]
+    return result
+
+
+def test_mixed_problems():
+    print("Смешанные примеры")
+    rng = random.Random(11)
+    for diff in (0.0, 0.4, 0.7, 1.0):
+        texts = []
+        for _ in range(300):
+            p = problems.generate("mix", diff, rng)
+            if not isinstance(p["answer"], int) or p["answer"] < 0:
+                check(f"mix@{diff} корректен", False, str(p))
+                return
+            ops = {sym for sym in ("+", "-", "×", "÷") if sym in p["text"]}
+            texts.append(p["text"])
+            if len(ops) < 2:
+                check(f"mix@{diff} минимум два действия", False, p["text"])
+                return
+            if evaluate_expression(p["text"]) != p["answer"]:
+                check(f"mix@{diff} посчитан верно", False,
+                      f"{p['text']} = {p['answer']} (вышло {evaluate_expression(p['text'])})")
+                return
+        check(f"mix@{diff}: 300 примеров с 2+ действиями и верным ответом", True)
+    print(f"  пример: {texts[-1]}")
+
+    # сверяем ответ примера независимым счётом со старшинством операций
+    p = problems.generate("mix", 0.5, rng)
+    value = evaluate_expression(p["text"])
+    check("смешанный пример посчитан верно", value == p["answer"],
+          f"{p['text']} = {p['answer']} (независимо {value})")
+
+
+def test_test_types():
+    print("Виды проверок")
+    ops = ["add", "sub", "mul"]
+    rng = random.Random(5)
+    made, used = problems.test_problems_for("test", ops, 0.3, 5, rng)
+    check("контрольная берёт ровно 2 операции", len(set(used)) == 2, used)
+    check("примеры только из выбранных операций",
+          {p["op"] for p in made} <= set(used), {p["op"] for p in made})
+    _made, used = problems.test_problems_for("final", ops, 0.3, 5, rng)
+    check("итоговая берёт все операции", set(used) == set(ops), used)
+    _made, used = problems.test_problems_for("exam", ops, 0.3, 5, rng)
+    check("экзамен берёт все операции", set(used) == set(ops), used)
+
+    check("итоговая дороже обычной",
+          economy.test_price("final") > economy.test_price("test"))
+    check("экзамен дороже итоговой",
+          economy.test_price("exam") > economy.test_price("final"))
+    check("итоговая сложнее обычной",
+          economy.test_difficulty(3, "final") > economy.test_difficulty(3, "test"))
+    check("экзамен сложнее итоговой",
+          economy.test_difficulty(3, "exam") > economy.test_difficulty(3, "final"))
+    check("итоговая платит больше",
+          economy.test_reward(3, "final") > economy.test_reward(3, "test"))
+    check("экзамен платит больше итоговой",
+          economy.test_reward(3, "exam") > economy.test_reward(3, "final"))
+    print(f"  цены:    {economy.test_price('test')} / {economy.test_price('final')}"
+          f" / {economy.test_price('exam')}")
+    print(f"  награда: {economy.test_reward(3)} / {economy.test_reward(3, 'final')}"
+          f" / {economy.test_reward(3, 'exam')}")
+
+
+def test_ascension():
+    print("Вознесение улучшений")
+    st = state.GameState(rng=random.Random(2))
+    ok, msg = st.ascend("knots")
+    check("до престижа вознесение закрыто", not ok, msg)
+
+    st.prestige_count = 1
+    ok, msg = st.ascend("knots")
+    check("вознесение без максимума невозможно", not ok, msg)
+
+    # сравниваем одинаковый уровень до и после вознесения:
+    # скорость за уровень удваивается, цена — учетверяется
+    st.base_levels["knots"] = 1
+    rate_before = st.upgrade_rate("knots")
+    cost_before = st.upgrade_cost("knots")
+
+    st.base_levels["knots"] = st.upgrade_max_level("knots")
+    ok, msg = st.ascend("knots")
+    check("вознесение прошло", ok, msg)
+    check("уровень сброшен на ноль", st.upgrade_level("knots") == 0)
+
+    st.base_levels["knots"] = 1
+    check("скорость за уровень удвоилась",
+          abs(st.upgrade_rate("knots") - rate_before * 2) < 1e-9,
+          (st.upgrade_rate("knots"), rate_before))
+    check("цена выросла вчетверо",
+          abs(st.upgrade_cost("knots") - cost_before * 4) < 1e-9,
+          (st.upgrade_cost("knots"), cost_before))
+    check("пассивная скорость учитывает вознесение",
+          abs(st.passive_rate() - 0.02) < 1e-9, st.passive_rate())
+
+    st.base_levels["knots"] = st.upgrade_max_level("knots")
+    st.ascend("knots")
+    st.base_levels["knots"] = 1
+    check("второе вознесение: скорость ×4",
+          abs(st.upgrade_rate("knots") - 0.04) < 1e-9, st.upgrade_rate("knots"))
+
+
+def test_prestige():
+    print("Престиж")
+    st = state.GameState(rng=random.Random(4))
+    ok, msg = st.do_prestige()
+    check("без примера 100% престиж закрыт", not ok, msg)
+
+    st.max_difficulty_solved = 1.0
+    st.money = 500.0
+    st.run_earned = 500.0
+    st.base_levels["knots"] = 5
+    st.grade_levels["double_book"] = 2
+    st.unlocked_ops.update({"sub", "mul"})
+    check("престиж открыт при 100% сложности", st.prestige_unlocked())
+
+    expected = economy.prestige_points(500.0, st.prestige_levels)
+    ok, msg = st.do_prestige()
+    check("престиж выполнен", ok, msg)
+    check("очки по курсу 1 деньга : 0.01 очка",
+          abs(st.prestige_points - expected) < 1e-9, st.prestige_points)
+    check("деньги обнулены", st.money == 0.0, st.money)
+    check("обычные улучшения сброшены", st.upgrade_level("knots") == 0)
+    check("контрольные улучшения сброшены", st.grade_level("double_book") == 0)
+    check("открытые операции сохранены", {"sub", "mul"} <= st.unlocked_ops, st.unlocked_ops)
+    check("открыты смешанные примеры", "mix" in st.unlocked_ops, st.unlocked_ops)
+    check("магазин престижа открыт", st.prestige_shop_unlocked)
+    check("забег обнулён", st.run_earned == 0.0)
+
+    st.money = 250.0
+    st.run_earned = 250.0
+    st.max_difficulty_solved = 1.0
+    st.do_prestige()
+    check("второй престиж дал больше очков", st.prestige_points > expected,
+          st.prestige_points)
+
+
+def test_prestige_shop():
+    print("Магазин престижных улучшений")
+    st = state.GameState(rng=random.Random(6))
+    st.prestige_count = 1
+    ok, msg = st.buy_prestige("pf_money")
+    check("без очков не купить", not ok, msg)
+
+    item = [i for i in config.PRESTIGE_ITEMS if i["id"] == "femboy_futa_house"][0]
+    check("Femboy Futa house стоит 7.21", item["price"] == 7.21, item["price"])
+    check("у него нет эффектов", item["effect"] == "none", item["effect"])
+    check("скидка 15%", item["discount"] == 0.15, item["discount"])
+    effective = economy.prestige_cost(item, 0)
+    check("цена со скидкой ≈ 6.13", abs(effective - 6.1285) < 1e-6, effective)
+
+    others = max(economy.prestige_cost(it, it["max_level"] - 1)
+                 for it in config.PRESTIGE_ITEMS if not it.get("easter_egg"))
+    check("Femboy Futa house — самая дорогая престижная прокачка",
+          effective > others, (effective, others))
+
+    st.prestige_points = 100.0
+    before_mult = st.money_mult()
+    ok, msg = st.buy_prestige("pf_money")
+    check("престижное улучшение куплено", ok, msg)
+    check("множитель денег вырос", st.money_mult() > before_mult,
+          (before_mult, st.money_mult()))
+
+    ok, msg = st.buy_prestige("femboy_futa_house")
+    check("Femboy Futa house куплен", ok, msg)
+    check("экран должен потемнеть", st.easter_egg)
+    check("повторно не купить", not st.buy_prestige("femboy_futa_house")[0])
+
+
+def test_account():
+    print("Аккаунты")
+    check("есть адреса для подключения", len(account_mod.candidate_urls()) >= 1)
+    st = state.GameState()
+    check("без аккаунта игра работает", not st.account.signed_in)
+    check("токен попадает в сохранение", "account_token" in st.to_dict())
+    check("настройки переживают сохранение",
+          state.GameState.from_dict(st.to_dict()).settings == st.settings)
+    partial = state.GameState.from_dict({"settings": {"big_text": True}})
+    check("частичные настройки дополняются дефолтами",
+          partial.settings["big_text"] and partial.settings["speed_gauge"])
+
+
+def test_settings():
+    print("Настройки отображения")
+    st = state.GameState()
+    for item in config.DISPLAY_SETTINGS:
+        check(f"настройка есть: {item['name']}", item["id"] in st.settings)
+    check("окно скорости включено по умолчанию", st.setting("speed_gauge"))
+    st.settings["speed_gauge"] = False
+    check("окно скорости выключается", not st.setting("speed_gauge"))
+
+
 def main():
     print("=" * 60)
     print("Math Idle — самопроверка")
     print("=" * 60)
     test_problems()
+    test_mixed_problems()
     test_prices()
     test_rewards()
+    test_test_types()
+    test_ascension()
+    test_prestige()
+    test_prestige_shop()
+    test_account()
+    test_settings()
     test_flow()
     test_upgrade_ladder()
     print("=" * 60)

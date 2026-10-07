@@ -95,6 +95,26 @@ def main():
         st3.submit(str(st3.current["answer"]))
     render("shop", st3, tabs=("shop", "upgrades"))
 
+    # престиж: разблокированный, с магазином престижных улучшений
+    st5 = state.GameState(rng=__import__("random").Random(8))
+    st5.next_problem()
+    st5.max_difficulty_solved = 1.0
+    st5.money = 500.0
+    st5.run_earned = 500.0
+    st5.base_levels["knots"] = 10
+    st5.prestige_count = 1
+    st5.prestige_points = 30.0
+    st5.tests_passed = 2
+    for _ in range(20):
+        st5.submit(str(st5.current["answer"]))
+    render("prestige", st5, tabs=("prestige", "test"))
+
+    # настройки + аккаунт
+    st6 = state.GameState(rng=__import__("random").Random(9))
+    st6.next_problem()
+    st6.base_levels["knots"] = 3
+    render("settings", st6, tabs=("settings",))
+
     st4 = state.GameState(rng=__import__("random").Random(6))
     st4.next_problem()
     st4.money = 10.0
