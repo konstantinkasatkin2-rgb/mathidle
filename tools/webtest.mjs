@@ -45,11 +45,18 @@ const dom = new JSDOM(html, {
 const { window } = dom;
 const doc = window.document;
 
-// jsdom не грузит внешние <script> с file:// — выполняем их вручную
+// jsdom не подгружает внешние файлы — выполняем скрипты и CSS вручную
 function runScript(file) {
   const el = doc.createElement("script");
   el.textContent = fs.readFileSync(path.join(ROOT, "web", file), "utf8");
   doc.body.appendChild(el);
+}
+
+/** Встраивает style.css, иначе проверки раскладки ничего не увидят. */
+function injectStyle() {
+  const style = doc.createElement("style");
+  style.textContent = fs.readFileSync(path.join(ROOT, "web", "style.css"), "utf8");
+  doc.head.appendChild(style);
 }
 
 const $ = (sel) => doc.querySelector(sel);
@@ -193,6 +200,7 @@ async function phase2() {
   check("пассив капает сразу (узелки куплены)",
     parseFloat(pd.getElementById("passiveHint").textContent.replace(",", ".")) >= 0,
     pd.getElementById("passiveHint").textContent);
+  pd.querySelector('[data-tab="upgrades"]').click();
   check("подсказка про узелки показана в панели улучшений",
     pd.querySelector(".panel").textContent.includes("деньги пойдут сами") ||
     pd.querySelector(".panel").textContent.includes("пассивно за сессию"),
@@ -201,6 +209,7 @@ async function phase2() {
   // прокручиваем игровое время: тики идут по setInterval, поэтому ждём
   await new Promise((r) => setTimeout(r, 1200));
   const hintText = pd.getElementById("passiveHint").textContent;
+  void hintText;
   check("счётчик сессии появляется в верхней панели",
     hintText.includes("за сессию"), hintText);
   const sessionGain = parseFloat(hintText.replace(/[^0-9,.]/g, "").replace(",", ".")) || 0;
@@ -231,7 +240,77 @@ async function phase2() {
   process.exit(failed.length || errors.length ? 1 : 0);
 }
 
+/* Проверка раскладки на конкретной ширине экрана: телефон и десктоп. */
+function layoutAt(width, height) {
+  return new Promise((resolve) => {
+    const domL = new JSDOM(html, {
+      runScripts: "dangerously", url: "https://appassets.mathidle.local/index.html",
+      pretendToBeVisual: true, virtualConsole,
+    });
+    const wl = domL.window, dl = wl.document;
+    Object.defineProperty(wl, "innerWidth", { value: width, configurable: true });
+    Object.defineProperty(wl, "innerHeight", { value: height, configurable: true });
+    // jsdom не умеет matchMedia — подменяем, чтобы игра видела нужную ширину
+    Object.defineProperty(wl, "matchMedia", {
+      configurable: true,
+      value: (query) => ({
+        media: query,
+        matches: /min-width:\s*(\d+)px/.test(query)
+          ? width >= Number(/min-width:\s*(\d+)px/.exec(query)[1])
+          : false,
+        addListener() {}, removeListener() {},
+      }),
+    });
+    const style = dl.createElement("style");
+    style.textContent = fs.readFileSync(path.join(ROOT, "web", "style.css"), "utf8");
+    dl.head.appendChild(style);
+    ["balance.js", "game.js"].forEach((file) => {
+      const el = dl.createElement("script");
+      el.textContent = fs.readFileSync(path.join(ROOT, "web", file), "utf8");
+      dl.body.appendChild(el);
+    });
+    const ready = () => resolve({ wl, dl });
+    if (dl.readyState === "loading") dl.addEventListener("DOMContentLoaded", ready);
+    else ready();
+  });
+}
+
+/* jsdom не вычисляет @media-правила, поэтому здесь проверяем логику
+   переключения экранов и структуру. Реальные размеры и переполнение
+   меряет tools/layout_check.sh в настоящем браузере. */
+async function testLayouts() {
+  console.log("");
+  console.log("Логика экранов (размеры — в tools/layout_check.sh)");
+
+  const inst = await layoutAt(360, 640);
+  const d = inst.dl;
+  check("открываемся на игре", d.body.classList.contains("view-play"));
+  check("вкладка «Игра» есть", !!d.querySelector('[data-tab="play"]'));
+  check("меню не выбрано", !d.body.classList.contains("view-menu"));
+
+  d.querySelector('[data-tab="settings"]').click();
+  check("переход в меню переключает вид", d.body.classList.contains("view-menu") &&
+    !d.body.classList.contains("view-play"));
+  check("активна вкладка настроек",
+    d.querySelector('[data-tab="settings"]').classList.contains("active"));
+  check("вкладка «Игра» больше не активна",
+    !d.querySelector('[data-tab="play"]').classList.contains("active"));
+
+  d.querySelector('[data-tab="play"]').click();
+  check("возврат к игре", d.body.classList.contains("view-play"));
+  check("активна вкладка «Игра»",
+    d.querySelector('[data-tab="play"]').classList.contains("active"));
+
+  // структура: навигация — прямой потомок оболочки и идёт после меню
+  check("навигация закреплена в оболочке",
+    d.querySelector(".tabs") === d.getElementById("tabs") &&
+    d.getElementById("app").lastElementChild === d.getElementById("tabs"));
+  check("вкладок шесть", d.querySelectorAll(".tabs button").length === 6,
+    String(d.querySelectorAll(".tabs button").length));
+}
+
 setTimeout(async () => {
+  injectStyle();
   runScript("balance.js");
   runScript("game.js");
 
@@ -247,6 +326,21 @@ setTimeout(async () => {
   answerCurrent(12);
   check("деньги начислены за примеры", money() > start, `${start} -> ${money()}`);
   check("поле ввода очищено", text("answerText") === "…", text("answerText"));
+
+  // --- раскладка: навигация внизу, видно либо игру, либо меню ---
+  check("игра открывается первой", doc.body.classList.contains("view-play"),
+    doc.body.classList.contains("view-play") ? "view-play" : "?");
+  check("есть вкладка «Игра»", !!$('[data-tab="play"]'));
+  check("навигация вне экрана прокрутки (закреплена снизу)",
+    $(".tabs").parentElement === doc.getElementById("app"), "nav внутри #app");
+  check("страница не прокручивается",
+    window.getComputedStyle(doc.body).overflow === "hidden", window.getComputedStyle(doc.body).overflow);
+
+  click('[data-tab="upgrades"]');
+  check("после перехода в меню активен view-menu", doc.body.classList.contains("view-menu"));
+  click('[data-tab="play"]');
+  check("возврат к игре по вкладке «Игра»", doc.body.classList.contains("view-play"));
+  click('[data-tab="upgrades"]');
 
   // --- покупка улучшения ---
   const knots = $('[data-buy="knots"]');
@@ -327,6 +421,8 @@ setTimeout(async () => {
     typeof save.money === "number" && !!save.base_levels && save.version === 2 &&
     !!save.prestige_levels && !!save.ascensions,
     Object.keys(save).join(","));
+
+  await testLayouts();
 
   // --- сдача контрольной: подставляем состояние напрямую через перезапуск ---
   phase2().catch((e) => { console.log("ФАЗА 2 УПАЛА:", e); process.exit(1); });

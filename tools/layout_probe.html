@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Math Idle — проверка раскладки</title>
+<style>
+  body { background:#0d111a; color:#e8edf5; font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 16px; }
+  h1 { font-size: 16px; margin: 0 0 12px; }
+  #frames { display: flex; flex-wrap: wrap; gap: 16px; }
+  figure { margin: 0; }
+  figcaption { font-size: 12px; color: #8b98ad; margin-bottom: 6px; }
+  iframe { border: 1px solid #2d384e; border-radius: 8px; display: block; }
+  #report { margin-top: 16px; font: 12px/1.6 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
+  .bad { color: #f56565; }
+  .good { color: #48bb78; }
+</style>
+</head>
+<body>
+<h1>Math Idle — раскладка на разных экранах</h1>
+<div id="frames"></div>
+<pre id="report">загрузка…</pre>
+
+<script>
+// Размеры, на которых проверяем игру.
+// `click` — вкладка, которую открываем перед замером.
+var SIZES = [
+  { name: "телефон 360×640", w: 360, h: 640 },
+  { name: "телефон 393×852", w: 393, h: 852 },
+  { name: "узкий 320×568",  w: 320, h: 568 },
+  { name: "телефон, меню «Настройки»", w: 360, h: 640, click: "settings" },
+  { name: "планшет 768×1024", w: 768, h: 1024 },
+  { name: "десктоп 1280×800", w: 1280, h: 800 }
+];
+
+var out = [];
+var problems = 0;
+
+function report(ok, text) {
+  if (!ok) problems++;
+  out.push((ok ? "  ok   " : "  FAIL ") + text);
+}
+
+function measure(win, name) {
+  var doc = win.document;
+  var body = doc.body;
+  var app = doc.getElementById("app");
+  var nav = doc.querySelector(".tabs");
+  var play = doc.getElementById("play");
+  var menus = doc.getElementById("menus");
+
+  out.push("");
+  out.push(name + "  (окно " + win.innerWidth + "×" + win.innerHeight + ")");
+
+  // 1. ничего не вылезает по горизонтали
+  var overflowX = doc.documentElement.scrollWidth - win.innerWidth;
+  report(overflowX <= 1, "нет горизонтального переполнения (лишнее: " + overflowX + "px)");
+
+  // 2. страница не прокручивается
+  var overflowY = doc.documentElement.scrollHeight - win.innerHeight;
+  report(overflowY <= 1, "нет вертикального переполнения (лишнее: " + overflowY + "px)");
+
+  // 3. навигация прижата к низу
+  var navBox = nav.getBoundingClientRect();
+  var appBox = app.getBoundingClientRect();
+  report(navBox.bottom <= appBox.bottom + 1.5,
+    "навигация внизу: " + navBox.bottom.toFixed(0) + " ≤ " + appBox.bottom.toFixed(0));
+
+  // 4. навигация видна целиком
+  report(navBox.right <= win.innerWidth + 1.5,
+    "навигация помещается по ширине (" + navBox.right.toFixed(0) + " ≤ " + win.innerWidth + ")");
+
+  // 5. верхняя панель помещается
+  var top = doc.getElementById("topbar").getBoundingClientRect();
+  report(top.right <= win.innerWidth + 1.5,
+    "верхняя панель помещается (" + top.right.toFixed(0) + ")");
+
+  // 6–7. игровой экран (проверяем, только если он открыт)
+  var playShown = win.getComputedStyle(play).display !== "none";
+  if (playShown) {
+    var keys = doc.querySelectorAll(".keypad button");
+    var keysBad = 0, keysBottom = 0;
+    for (var i = 0; i < keys.length; i++) {
+      var r = keys[i].getBoundingClientRect();
+      if (r.right > win.innerWidth + 1 || r.bottom > win.innerHeight + 1 || r.left < -1) keysBad++;
+      keysBottom = Math.max(keysBottom, r.bottom);
+    }
+    report(keysBad === 0, "все " + keys.length + " кнопок в экране (вылезли: " + keysBad + ")");
+    report(keysBottom > 0 && keysBottom <= win.innerHeight,
+      "клавиатура не обрезана снизу (" + keysBottom.toFixed(0) + " ≤ " + win.innerHeight + ")");
+
+    var problem = doc.getElementById("problem").getBoundingClientRect();
+    report(problem.height > 0 && problem.bottom <= win.innerHeight + 1,
+      "пример виден (" + problem.height.toFixed(0) + "px)");
+  }
+
+  // 8. на телефоне игра и меню не наезжают друг на друга
+  var wide = win.innerWidth >= 760;
+  var menuShown = win.getComputedStyle(menus).display !== "none";
+  if (wide) {
+    report(playShown && menuShown, "на широком экране видны и игра, и меню");
+    var playBox = play.getBoundingClientRect(), menuBox = menus.getBoundingClientRect();
+    report(playBox.right <= menuBox.left + 1,
+      "колонки не перекрываются (" + playBox.right.toFixed(0) + " ≤ " + menuBox.left.toFixed(0) + ")");
+  } else {
+    report(playShown !== menuShown, "на телефоне показан ровно один экран");
+  }
+
+  // 9. содержимое открытой вкладки помещается и прокручивается
+  var panel = doc.getElementById("panel");
+  if (panel && menuShown) {
+    var pRect = panel.getBoundingClientRect();
+    report(pRect.width > 0 && pRect.right <= win.innerWidth + 1.5,
+      "панель меню по ширине (" + pRect.width.toFixed(0) + ")");
+    report(pRect.height > 0 && pRect.bottom <= win.innerHeight + 1.5,
+      "панель меню по высоте (" + pRect.height.toFixed(0) + " ≤ " + win.innerHeight + ")");
+    var items = panel.querySelectorAll(".item, .info-card");
+    var hidden = 0;
+    for (var i = 0; i < items.length; i++) {
+      var r = items[i].getBoundingClientRect();
+      if (r.right > win.innerWidth + 1.5 || r.left < -1.5) hidden++;
+    }
+    report(hidden === 0, "карточки меню не вылезают (" + items.length + " шт, нарушено " + hidden + ")");
+  }
+}
+
+function load(size, done) {
+  var figure = document.createElement("figure");
+  var caption = document.createElement("figcaption");
+  caption.textContent = size.name;
+  var frame = document.createElement("iframe");
+  frame.width = size.w;
+  frame.height = size.h;
+  frame.src = "../web/index.html";
+  figure.appendChild(caption);
+  figure.appendChild(frame);
+  document.getElementById("frames").appendChild(figure);
+
+  frame.addEventListener("load", function () {
+    // даём игре время на загрузку скриптов и первый кадр
+    setTimeout(function () {
+      try {
+        if (size.click) {
+          var tab = frame.contentDocument.querySelector('[data-tab="' + size.click + '"]');
+          if (tab) tab.click();
+        }
+        measure(frame.contentWindow, size.name);
+      } catch (err) {
+        report(false, "ошибка измерения: " + err.message);
+      }
+      done();
+    }, 900);
+  });
+}
+
+(function run() {
+  var i = 0;
+  (function next() {
+    if (i >= SIZES.length) {
+      var reportEl = document.getElementById("report");
+      reportEl.textContent = (problems === 0 ? "ВСЁ ПОМЕЩАЕТСЯ" : "ПРОБЛЕМ: " + problems) +
+        "\n" + out.join("\n");
+      reportEl.className = problems === 0 ? "good" : "bad";
+      document.title = problems === 0 ? "LAYOUT-OK" : "LAYOUT-FAIL:" + problems;
+      return;
+    }
+    load(SIZES[i++], next);
+  })();
+})();
+</script>
+</body>
+</html>

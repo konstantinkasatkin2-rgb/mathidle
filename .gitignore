@@ -32,3 +32,6 @@ mathidle-selftest.txt
 
 # скачанные с GitHub сборки
 downloads/
+
+# скриншоты проверки раскладки
+.shots/

@@ -8,7 +8,7 @@
 <link rel="icon" href="icon.png">
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="view-play">
 <div id="app">
 
   <!-- ================= верхняя панель ================= -->
@@ -25,7 +25,7 @@
       <b class="money" id="money">0</b>
     </div>
     <div class="stat">
-      <small>ПАССИВНО КАПАЕТ</small>
+      <small>ПАССИВНО</small>
       <b class="accent" id="passive">+0/с</b>
       <small id="passiveHint">0 примера/с</small>
     </div>
@@ -36,95 +36,94 @@
     </div>
   </header>
 
-  <!-- ================= основная часть ================= -->
-  <main>
-    <!-- ---------- пример ---------- -->
-    <section id="play">
-      <div class="card problem-card">
-        <div class="row-between">
-          <h2 id="playTitle">Реши пример</h2>
-          <span id="playHint" class="hint hidden"></span>
+  <!-- ================= игра ================= -->
+  <section id="play">
+    <div class="card problem-card">
+      <div class="row-between">
+        <h2 id="playTitle">Реши пример</h2>
+        <span id="playHint" class="hint hidden"></span>
+      </div>
+      <div id="timerWrap" class="hidden">
+        <div class="bar"><i id="timerBar"></i></div>
+        <div class="row-between small">
+          <span id="timerText"></span>
+          <span id="testProgress"></span>
         </div>
-        <div id="timerWrap" class="hidden">
-          <div class="bar"><i id="timerBar"></i></div>
-          <div class="row-between small">
-            <span id="timerText"></span>
-            <span id="testProgress"></span>
-          </div>
-        </div>
-
-        <div id="problem" class="problem">…</div>
-
-        <!-- окно скорости: зелёная зона и бегущий маркер -->
-        <div id="speedGauge">
-          <div class="gauge-row">
-            <span class="small" style="color:var(--green)">быстро</span>
-            <span class="small" id="speedText">скорость ×1.00 · 0.0с</span>
-            <span class="small" style="color:var(--muted)">медленно</span>
-          </div>
-          <div class="gauge" id="speedTrack">
-            <i id="speedFast"></i>
-            <b id="speedMarker"></b>
-          </div>
-        </div>
-
-        <div id="diffWrap">
-          <div class="diffbar"><i id="diffBar"></i></div>
-          <div class="row-center small"><span id="diffText"></span></div>
-        </div>
-
-        <div id="answer" class="answer"><span id="answerText">…</span><i class="caret"></i></div>
-        <div id="floaters"></div>
-
-        <div class="keypad">
-          <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button>
-          <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button>
-          <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button>
-          <button data-key="-">−</button><button data-key="0">0</button>
-          <button data-key="del" class="wide">DEL</button>
-          <button data-key="ok" class="wide primary">OK</button>
-        </div>
-        <div class="hint-line">Цифры · Backspace — стереть · Enter — ответ</div>
       </div>
 
-      <div id="log"></div>
-    </section>
+      <div id="problem" class="problem">…</div>
 
-    <!-- ---------- магазин ---------- -->
-    <section id="shop">
-      <nav class="tabs">
-        <button data-tab="upgrades" class="active">Улучшения</button>
-        <button data-tab="test">Проверки</button>
-        <button data-tab="prestige" disabled>Престиж</button>
-        <button data-tab="shop" disabled>Магазин</button>
-        <button data-tab="settings">Настройки</button>
-      </nav>
-      <div id="panel" class="panel"></div>
-    </section>
-  </main>
+      <!-- окно скорости -->
+      <div id="speedGauge">
+        <div class="gauge-row">
+          <span class="small" style="color:var(--green)">быстро</span>
+          <span class="small" id="speedText">скорость ×1.00 · 0.0с</span>
+          <span class="small" style="color:var(--muted)">медленно</span>
+        </div>
+        <div class="gauge" id="speedTrack">
+          <i id="speedFast"></i>
+          <b id="speedMarker"></b>
+        </div>
+      </div>
 
-  <!-- ================= модальное окно ================= -->
-  <div id="modal" class="modal hidden">
-    <div class="modal-card">
-      <h3 id="modalTitle"></h3>
-      <div id="modalBody"></div>
-      <button id="modalClose">Понятно</button>
-    </div>
-  </div>
+      <div id="diffWrap">
+        <div class="diffbar"><i id="diffBar"></i></div>
+        <div class="row-center small"><span id="diffText"></span></div>
+      </div>
 
-  <!-- ================= затемнение после Femboy Futa house ================= -->
-  <div id="egg" class="egg hidden">
-    <div id="eggVeil" class="egg-veil">
-      <div class="egg-card">
-        <h2>Femboy Futa house</h2>
-        <p>Куплено. Эффектов нет. Как и обещано.</p>
-        <h3 class="egg-wait">Ждите версии 1.3...</h3>
-        <small>Enter, Esc или нажатие — вернуться к игре</small>
+      <div id="answer" class="answer"><span id="answerText">…</span><i class="caret"></i></div>
+      <div id="floaters"></div>
+
+      <div class="keypad">
+        <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button>
+        <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button>
+        <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button>
+        <button data-key="-">−</button><button data-key="0">0</button>
+        <button data-key="del" class="wide">DEL</button>
+        <button data-key="ok" class="wide primary">OK</button>
       </div>
     </div>
-  </div>
+    <div id="log"></div>
+  </section>
+
+  <!-- ================= меню ================= -->
+  <section id="menus">
+    <div id="panel" class="panel"></div>
+  </section>
+
+  <!-- ================= навигация, всегда на виду ================= -->
+  <nav class="tabs" id="tabs">
+    <button data-tab="play">Игра</button>
+    <button data-tab="upgrades" class="active">Улучшения</button>
+    <button data-tab="test">Проверки</button>
+    <button data-tab="prestige">Престиж</button>
+    <button data-tab="shop">Магазин</button>
+    <button data-tab="settings">Настройки</button>
+  </nav>
 
 </div>
+
+<!-- ================= модальное окно ================= -->
+<div id="modal" class="modal hidden">
+  <div class="modal-card">
+    <h3 id="modalTitle"></h3>
+    <div id="modalBody"></div>
+    <button id="modalClose">Понятно</button>
+  </div>
+</div>
+
+<!-- ================= затемнение после Femboy Futa house ================= -->
+<div id="egg" class="egg hidden">
+  <div id="eggVeil" class="egg-veil">
+    <div class="egg-card">
+      <h2>Femboy Futa house</h2>
+      <p>Куплено. Эффектов нет. Как и обещано.</p>
+      <h3 class="egg-wait">Ждите версии 1.3...</h3>
+      <small>Enter, Esc или нажатие — вернуться к игре</small>
+    </div>
+  </div>
+</div>
+
 <script src="balance.js"></script>
 <script src="game.js"></script>
 </body>

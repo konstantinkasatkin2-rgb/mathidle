@@ -929,7 +929,8 @@
   var ui = (function () {
     var el = {};
     var input = "";
-    var tab = "upgrades";
+    var tab = "upgrades";        // открытое меню
+    var view = "play";           // что показано на телефоне: игра или меню
     var events = [];
     var floaters = [];
     var eggDismissed = false;
@@ -941,6 +942,7 @@
     };
 
     var TABS = [
+      { id: "play", label: "Игра" },
       { id: "upgrades", label: "Улучшения" },
       { id: "test", label: "Проверки" },
       { id: "prestige", label: "Престиж" },
@@ -1075,12 +1077,53 @@
 
     // ------------------------------------------------------------- вкладки
     function tabLocked(id) {
+      if (id === "play") return false;
       if (id === "shop" && !shopUnlocked()) return true;
       if (id === "prestige" && state.prestigeCount === 0 && !prestigeUnlocked()) return true;
       return false;
     }
 
+    /** На широком экране игра и меню видны одновременно,
+     *  на телефоне — по одному. */
+    function isDesktop() {
+      return window.matchMedia && window.matchMedia("(min-width: 760px)").matches;
+    }
+
+    function applyView() {
+      document.body.classList.toggle("view-play", view === "play");
+      document.body.classList.toggle("view-menu", view === "menu");
+    }
+
+    /** На телефоне активна вкладка «Игра», на десктопе — вкладка меню. */
+    function activeTab() {
+      return (view === "play" && !isDesktop()) ? "play" : tab;
+    }
+
+    /** Подсвечивает активную вкладку и обновляет блокировки. */
+    function syncTabs() {
+      var current = activeTab();
+      for (var i = 0; i < el.tabs.length; i++) {
+        var id = el.tabs[i].getAttribute("data-tab");
+        el.tabs[i].classList.toggle("active", id === current);
+        el.tabs[i].disabled = tabLocked(id);
+      }
+    }
+
+    function setTab(id) {
+      if (id === "play") {
+        view = "play";
+        applyView();
+        syncTabs();
+        renderPlay();
+        return;
+      }
+      tab = id;
+      view = "menu";
+      renderPanel();
+    }
+
     function renderPanel() {
+      applyView();
       var html = "";
       if (tab === "upgrades") html = panelUpgrades();
       else if (tab === "test") html = panelTests();
@@ -1089,11 +1132,8 @@
       else html = panelGrades();
       el.panel.innerHTML = html;
       bindPanel();
-      for (var i = 0; i < el.tabs.length; i++) {
-        var id = el.tabs[i].getAttribute("data-tab");
-        el.tabs[i].classList.toggle("active", id === tab);
-        el.tabs[i].disabled = tabLocked(id);
-      }
+      el.panel.scrollTop = 0;
+      syncTabs();
     }
 
     function panelUpgrades() {
@@ -1347,7 +1387,7 @@
       var startBtn = el.panel.querySelector("[data-start]");
       if (startBtn) startBtn.onclick = function () {
         if (startTest(startBtn.getAttribute("data-start"))) {
-          input = ""; tab = "upgrades"; renderAll();
+          input = ""; view = "play"; renderAll();   // сразу к примеру
         }
       };
       var abortBtn = el.panel.querySelector("[data-abort]");
@@ -1475,11 +1515,10 @@
       else if (k === "Delete") { input = ""; renderPlay(); e.preventDefault(); }
       else if (k === "Enter") { pressEnter(); e.preventDefault(); }
       else if (k === "Tab") {
-        var order = ["upgrades", "test", "prestige", "shop", "settings"];
-        var i = order.indexOf(tab);
-        tab = order[(i + 1) % order.length];
-        if (tabLocked(tab)) tab = "upgrades";
-        renderPanel();
+        var order = ["play", "upgrades", "test", "prestige", "shop", "settings"];
+        var start = view === "play" ? 0 : order.indexOf(tab);
+        var next = order[(start + 1) % order.length];
+        if (!tabLocked(next)) setTab(next);
         e.preventDefault();
       }
     }
@@ -1492,9 +1531,19 @@
       else el.eggVeil.classList.add("hidden");
     }
 
+    /** Подгоняем высоту оболочки под реальное окно.
+     *  В старых Android WebView нет dvh/svh, поэтому меряем сами. */
+    function syncViewport() {
+      var h = window.innerHeight;
+      if (h > 0) document.documentElement.style.setProperty("--app-h", h + "px");
+    }
+
     // ------------------------------------------------------------- init
     function init() {
       cache();
+      tab = "upgrades";                   // открытое меню по умолчанию
+      view = "play";                     // на телефоне открываемся на игре
+      syncViewport();
 
       var keys = document.querySelectorAll(".keypad button");
       for (var i = 0; i < keys.length; i++) {
@@ -1508,8 +1557,7 @@
           btn.addEventListener("click", function () {
             var id = btn.getAttribute("data-tab");
             if (tabLocked(id)) return;
-            tab = id;
-            renderPanel();
+            setTab(id);
           });
         })(el.tabs[j]);
       }
@@ -1529,6 +1577,14 @@
       });
       document.addEventListener("visibilitychange", function () {
         if (document.hidden) { save(); syncToServer(true); }
+        else { syncViewport(); renderPlay(); }
+      });
+      window.addEventListener("resize", function () {
+        syncViewport();
+        renderPlay();
+      });
+      window.addEventListener("orientationchange", function () {
+        setTimeout(function () { syncViewport(); renderPlay(); }, 220);
       });
       renderEgg();
     }
