@@ -227,6 +227,7 @@ bash tools/test_all.sh
 | `tools/account_check.sh` | регистрация, вход и ошибки сервера в настоящем браузере |
 | `tools/mixedcontent_check.py` | воспроизводит блокировку запроса HTTPS-страницы на HTTP-сервер |
 | `tools/make_cert.sh` | сертификат для HTTPS-сервера аккаунтов |
+| `tools/push_via_api.py` | заливает коммит через API, когда `git push` падает у GitHub |
 | `MathIdle.exe --selftest` | проверяет упакованный бинарник: ресурсы, ввод, игровой цикл, сохранения |
 
 Сервер аккаунтов проверяется отдельно: `python server/account_server.py` и
