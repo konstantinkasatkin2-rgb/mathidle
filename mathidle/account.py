@@ -9,6 +9,7 @@
 
 import json
 import os
+import socket
 import urllib.error
 import urllib.request
 
@@ -19,6 +20,29 @@ TIMEOUT = 6.0
 
 class AccountError(Exception):
     """Ошибка аккаунта, понятная игроку."""
+
+
+def explain_network_error(base, exc):
+    """Переводит системную ошибку сети на понятный игроку текст.
+
+    Без этого игрок видит «<urlopen error [WinError 10061] Подключение не
+    установлено…» — и не понимает, что делать.
+    """
+    reason = getattr(exc, "reason", None)
+    text = str(reason if reason is not None else exc).lower()
+
+    if isinstance(reason, ConnectionRefusedError) or "10061" in text \
+            or "connection refused" in text or "подключение не установлено" in text:
+        return f"{base}: сервер не запущен"
+    if isinstance(reason, socket.timeout) or "timed out" in text or "10060" in text \
+            or "превышен интервал" in text:
+        return f"{base}: не отвечает (проверь, что он запущен)"
+    if isinstance(reason, socket.gaierror) or "name or service not known" in text \
+            or "не найден" in text:
+        return f"{base}: адрес не найден"
+    if "10051" in text or "сеть недоступна" in text:
+        return f"{base}: сеть недоступна"
+    return f"{base}: {reason if reason is not None else exc}"
 
 
 def candidate_urls():
@@ -91,11 +115,20 @@ class AccountClient:
                     raise AccountError(message) from exc
                 errors.append(f"{base}: {message}")
             except (urllib.error.URLError, OSError, TimeoutError) as exc:
-                errors.append(f"{base}: {exc}")
+                errors.append(explain_network_error(base, exc))
             except ValueError as exc:
                 errors.append(f"{base}: неверный ответ ({exc})")
+
+        # Все адреса молчат. Чаще всего это просто «сервер не запущен» —
+        # говорим об этом прямо, а не перечисляем системные коды.
         self.last_error = "; ".join(errors) or "нет доступных адресов"
-        raise AccountError(f"Сервер недоступен ({self.last_error})")
+        if errors and all("не запущен" in e or "не отвечает" in e for e in errors):
+            raise AccountError(
+                "Сервер аккаунтов не запущен. Открой MathIdleServer.exe "
+                "в папке игры — или bash tools/serve_accounts.sh, если игра "
+                "запущена из исходников."
+            )
+        raise AccountError(f"Сервер недоступен. Проверено: {self.last_error}")
 
     # ------------------------------------------------------------------
     def ping(self):

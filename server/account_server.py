@@ -48,8 +48,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.dirname(HERE))
+sys.path.insert(0, HERE)
 
-from mathidle import config  # noqa: E402
+try:
+    from mathidle import config
+except ImportError:
+    # Сервер собирается отдельной программой (MathIdleServer.exe), и пакета
+    # mathidle рядом с ним нет. Нужны всего два значения, поэтому берём их
+    # отсюда; чтобы версия не расходилась с игрой, она подставляется при сборке.
+    class _Config:
+        GAME = {"version": "1.2.5"}
+        ACCOUNT = {"session_token_days": 30}
+
+    config = _Config()
+
 import secret_store as secret  # noqa: E402
 
 # База — в папке проекта, а не рядом с кодом сервера: так её не потерять

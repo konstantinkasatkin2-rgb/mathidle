@@ -125,10 +125,16 @@ public class MainActivity extends Activity {
                 @Override
                 public void run() {
                     final List<String> found = new ArrayList<>();
-                    for (String url : discover()) {
-                        if (!found.contains(url)) {
-                            found.add(url);
+                    try {
+                        for (String url : discover()) {
+                            if (!found.contains(url)) {
+                                found.add(url);
+                            }
                         }
+                    } catch (Exception err) {
+                        // Поиск — необязательная удобная функция: его поломка
+                        // не должна ронять игру, адрес вводят и руками.
+                        found.clear();
                     }
                     final String json = toJson(found);
                     ui.post(new Runnable() {
@@ -161,9 +167,15 @@ public class MainActivity extends Activity {
     /** Ищем сервер: спросим по UDP, а если не вышло — переберём адреса сети. */
     private List<String> discover() {
         List<String> urls = new ArrayList<>();
-        urls.addAll(byBroadcast());
-        if (urls.isEmpty()) {
-            urls.addAll(byProbing());
+        try {
+            urls.addAll(byBroadcast());
+            if (urls.isEmpty()) {
+                urls.addAll(byProbing());
+            }
+        } catch (Exception err) {
+            // Поиск — необязательная удобная функция. Любая его поломка
+            // не должна ронять игру: адрес можно ввести и руками.
+            urls.clear();
         }
         return urls;
     }
@@ -216,11 +228,12 @@ public class MainActivity extends Activity {
         if (prefix == null) {
             return urls;
         }
-        int last = Integer.parseInt(prefix.substring(prefix.lastIndexOf('.') + 1));
-        for (int host = 1; host <= 254 && last > 0; host++) {
-            String ip = prefix + host;
-            if (responds(ip)) {
-                urls.add("http://" + ip + ":" + DISCOVERY_PORT);
+        // prefix уже кончается точкой: «192.168.1.» — просто дописываем
+        // номер узла. Ничего разбирать не надо: префикс всегда с точкой.
+        // Нашли несколько — хватит, дальше идти незачем.
+        for (int host = 1; host <= 254 && urls.size() < 3; host++) {
+            if (responds(prefix + host)) {
+                urls.add("http://" + prefix + host + ":" + DISCOVERY_PORT);
             }
         }
         return urls;
@@ -231,8 +244,8 @@ public class MainActivity extends Activity {
         try {
             conn = (HttpURLConnection) new URL(
                     "http://" + ip + ":" + DISCOVERY_PORT + "/api/health").openConnection();
-            conn.setConnectTimeout(600);
-            conn.setReadTimeout(600);
+            conn.setConnectTimeout(400);
+            conn.setReadTimeout(400);
             conn.setRequestMethod("GET");
             if (conn.getResponseCode() == 200
                     && "mathidle".equalsIgnoreCase(conn.getHeaderField("X-MathIdle"))) {

@@ -1125,12 +1125,24 @@ class GameUI:
                          True, MUTED), (rect.x + 4, y))
         y += 24
         if st.account.last_error:
-            canvas.blit(small.render("сервер: " + st.account.last_error[:60], True, RED),
+            canvas.blit(small.render("сервер: " + st.account.last_error[:70], True, RED),
                         (rect.x + 4, y))
             y += 20
         if self._account_error:
             canvas.blit(small.render(self._account_error, True, RED), (rect.x + 4, y))
             y += 22
+
+        # Если сервер не отвечает, предложим его запустить: без этого игрок
+        # видит ошибку и не понимает, что делать дальше.
+        if not st.account.signed_in and not st.account.ping():
+            y += 4
+            btn = Button(pygame.Rect(rect.x, y, rect.w, 42),
+                         "Запустить сервер на этом компьютере",
+                         "прогресс будет храниться тут", BLUE, True)
+            btn.action = self.do_start_server
+            btn.draw(canvas, self.fonts)
+            self._pending.append(btn)
+            y += 50
 
         field_w = (rect.w - 10) // 2
         name_rect = pygame.Rect(rect.x, y, field_w, 40)
@@ -1168,6 +1180,39 @@ class GameUI:
         if ok:
             st = self.state
             st.log(message, "unlock")
+
+    def do_start_server(self):
+        """Запускает сервер аккаунтов, если он есть рядом с игрой.
+
+        Раньше игрок, скачавший игру, не мог зарегистрироваться вовсе: сервера
+        в архиве не было, а ставить Python ему незачем.
+        """
+        import os
+        import subprocess
+        import sys
+
+        here = os.path.dirname(os.path.abspath(sys.argv[0] if getattr(sys, "frozen", False)
+                                               else __file__))
+        candidates = [
+            os.path.join(here, "MathIdleServer", "MathIdleServer.exe"),
+            os.path.join(os.path.dirname(here), "MathIdleServer", "MathIdleServer.exe"),
+            os.path.join(here, "..", "dist", "MathIdleServer", "MathIdleServer.exe"),
+        ]
+        for path in candidates:
+            path = os.path.abspath(path)
+            if os.path.exists(path):
+                try:
+                    subprocess.Popen([path], cwd=os.path.dirname(path))
+                except OSError as err:
+                    self._account_error = f"Не удалось запустить сервер: {err}"
+                    return
+                self._account_error = ""
+                self.state.log(
+                    "Сервер аккаунтов запущен, окно не закрывай", "unlock")
+                return
+        self._account_error = (
+            "Рядом с игрой нет MathIdleServer.exe. Если игра запущена из "
+            "исходников: bash tools/serve_accounts.sh")
 
     def do_register(self):
         ok, message = self.state.register(self._login_name, self._login_pass)

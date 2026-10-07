@@ -21,7 +21,7 @@ android {
         targetSdk 34
         // держим в согласии с версией игры из mathidle/config.py
         versionCode 124
-        versionName "1.2.4"
+        versionName "1.2.5"
     }
 
     signingConfigs {
