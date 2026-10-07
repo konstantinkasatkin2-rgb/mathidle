@@ -334,12 +334,12 @@
 
   // ---------------------------------------------------------------- аккаунт
   var account = {
-    url: null, username: null, token: null, lastError: null,
+    url: null, username: null, token: null, lastError: null, customUrl: "",
 
+    /** Адреса, которые пробуем по очереди: заданный игроком, потом дефолтные. */
     candidateUrls: function () {
       var list = [];
-      var custom = (typeof process !== "undefined" && process.env && process.env.MATHIDLE_SERVER) ||
-        (window.MATHIDLE_SERVER || "");
+      var custom = (state.serverUrl || "").trim() || (window.MATHIDLE_SERVER || "");
       if (custom) list.push(custom);
       var def = B.account.default_url || "";
       if (def) list.push(def);
@@ -349,7 +349,8 @@
       }
       var seen = {}, out = [];
       for (var j = 0; j < list.length; j++) {
-        if (!seen[list[j]]) { seen[list[j]] = 1; out.push(list[j].replace(/\/$/, "")); }
+        var clean = String(list[j]).replace(/\/+$/, "");
+        if (clean && !seen[clean]) { seen[clean] = 1; out.push(clean); }
       }
       return out;
     },
@@ -358,38 +359,79 @@
 
     status: function () { return this.url || "(не подключено)"; },
 
+    /** Страница по HTTPS не может ходить на HTTP — это ловится заранее. */
+    isMixedContent: function (base) {
+      if (!/^https:/i.test(window.location.protocol)) return false;
+      return /^http:/i.test(String(base));
+    },
+
     request: function (path, method, payload, token) {
       var base = this.url || this.candidateUrls()[0];
+      if (this.isMixedContent(base)) {
+        var blocked = new Error("HTTPS-страница не может обратиться к http-серверу. " +
+          B.account.https_required_hint);
+        blocked.mixed = true;
+        return Promise.reject(blocked);
+      }
       var opts = { method: method || "GET", headers: { Accept: "application/json" } };
       if (payload !== undefined && payload !== null) {
         opts.headers["Content-Type"] = "application/json";
         opts.body = JSON.stringify(payload);
       }
       if (token) opts.headers["Authorization"] = "Bearer " + token;
+      var self = this;
       return fetch(base + path, opts).then(function (response) {
         return response.json().catch(function () { return {}; }).then(function (data) {
           if (!response.ok) {
             var err = new Error(data.error || ("HTTP " + response.status));
             err.httpStatus = response.status;
+            err.serverSaid = true;
             throw err;
           }
           return data;
         });
+      }).catch(function (err) {
+        // fetch падает целиком: сеть, CORS, mixed content, не тот адрес
+        if (err && err.serverSaid) throw err;
+        var message = err && err.message ? err.message : "сеть недоступна";
+        if (/failed to fetch|networkerror|load failed/i.test(message)) {
+          var hint = self.isMixedContent(base)
+            ? B.account.https_required_hint
+            : "Проверьте, что сервер аккаунтов запущен (bash tools/serve_accounts.sh) " +
+              "и что адрес доступен с этого устройства.";
+          var wrapped = new Error("Сервер не отвечает. " + hint);
+          wrapped.unreachable = true;
+          throw wrapped;
+        }
+        var net = new Error("Сервер не отвечает: " + message);
+        net.unreachable = true;
+        throw net;
       });
     },
 
+    /** Перебирает адреса только пока сервер не отвечает.
+     *  Логический ответ («неверный пароль») — повод не искать другой адрес. */
     tryUrls: function (path, method, payload, token) {
-      var bases = this.url ? [this.url] : this.candidateUrls();
-      var self = this, lastError = null;
-      return bases.reduce(function (chain, base) {
-        return chain.catch(function () {
-          self.url = base;
-          return self.request(path, method, payload, token);
+      var bases = this.candidateUrls();
+      var self = this;
+      var lastError = null;
+      function attempt(index) {
+        if (index >= bases.length) {
+          return Promise.reject(lastError || new Error("Сервер недоступен"));
+        }
+        self.url = bases[index];
+        return self.request(path, method, payload, token).catch(function (err) {
+          lastError = err;
+          if (err && (err.serverSaid || err.mixed)) throw err;
+          return attempt(index + 1);
         });
-      }, Promise.reject()).catch(function (err) {
+      }
+      return attempt(0).catch(function (err) {
         self.lastError = err && err.message ? err.message : "сервер недоступен";
-        var wrapped = new Error("Сервер недоступен (" + self.lastError + ")");
-        wrapped.unreachable = true;
+        var wrapped = new Error(self.lastError);
+        wrapped.unreachable = !!(err && err.unreachable);
+        wrapped.serverSaid = !!(err && err.serverSaid);
+        wrapped.mixed = !!(err && err.mixed);
         throw wrapped;
       });
     },
@@ -437,6 +479,7 @@
     stats: { solved: 0, wrong: 0, earned: 0, passive_earned: 0, prestige_points_total: 0,
              tests_passed: 0, idle_examples: 0, best_streak: 0, ascensions: 0, femboy: false },
     settings: {},
+    serverUrl: "",          // адрес сервера аккаунтов (настраивается в «Настройках»)
     current: null,
     shownAt: 0,
     test: null,
@@ -853,6 +896,7 @@
       tests_passed: state.testsPassed,
       max_difficulty_solved: state.maxDifficulty,
       settings: state.settings,
+      server_url: state.serverUrl,
       stats: state.stats,
       play_time: state.playTime,
       account_username: account.username,
@@ -893,6 +937,7 @@
     Object.keys(state.settings).forEach(function (key) {
       if (data.settings && data.settings[key] !== undefined) state.settings[key] = data.settings[key];
     });
+    state.serverUrl = String(data.server_url || "");
     state.playTime = Number(data.play_time) || 0;
     if (data.account_token) {
       account.username = data.account_username;
@@ -1325,26 +1370,38 @@
         out += '<div class="small accent">Вы вошли как ' + account.username +
           " · прогресс синхронизируется</div>" +
           '<div class="small" style="margin:4px 0 8px">Сервер: ' + account.status() + "</div>" +
+          serverUrlField() +
           '<button class="big-btn danger" data-signout="1">Выйти</button>';
       } else {
         out += '<div class="small">Войди, чтобы прогресс хранился на сервере, ' +
-          "а не на устройстве</div>";
+          "а не на устройстве</div>" +
+          serverUrlField();
         if (account.lastError) {
-          out += '<div class="small" style="color:var(--red);margin:4px 0">сервер: ' +
-            account.lastError + "</div>";
+          out += '<div class="warn" >' + escapeHtml(account.lastError) + "</div>";
         }
         if (accountError) {
-          out += '<div class="small" style="color:var(--red);margin:4px 0">' + accountError + "</div>";
+          out += '<div class="warn">' + escapeHtml(accountError) + "</div>";
         }
         out += '<div class="row-fields">' +
           '<input id="loginName" type="text" placeholder="имя игрока" value="' +
-          escapeHtml(loginName) + '" maxlength="24">' +
-          '<input id="loginPass" type="password" placeholder="пароль" maxlength="64">' +
-          "</div>" +
+          escapeHtml(loginName) + '" maxlength="24" autocomplete="username">' +
+          '<input id="loginPass" type="password" placeholder="пароль (мин. 6)" ' +
+          'maxlength="64" autocomplete="current-password"></div>' +
           '<button class="big-btn" data-login="1">Войти</button>' +
           '<button class="big-btn" data-register="1" style="background:var(--blue)">Регистрация</button>';
       }
       return out;
+    }
+
+    /** Адрес сервера аккаунтов — его надо задать, если игра открыта не с компьютера. */
+    function serverUrlField() {
+      var secure = /^https:/i.test(window.location.protocol);
+      return '<label class="small field-label">Адрес сервера аккаунтов' +
+        (secure ? " (нужен https://)" : "") + "</label>" +
+        '<input id="serverUrl" class="full-input" type="text" ' +
+        'placeholder="http://192.168.1.10:8766" value="' +
+        escapeHtml(state.serverUrl) + '" spellcheck="false">' +
+        '<button class="small-btn" data-save-url="1">Сохранить адрес</button>';
     }
 
     function escapeHtml(text) {
@@ -1406,6 +1463,16 @@
         state.accountSaved = false;
         renderAll();
       };
+      var urlBtn = el.panel.querySelector("[data-save-url]");
+      if (urlBtn) urlBtn.onclick = function () {
+        var input = document.getElementById("serverUrl");
+        state.serverUrl = input ? input.value.trim().replace(/\/+$/, "") : "";
+        account.url = null;
+        account.lastError = null;
+        accountError = "";
+        save();
+        renderAll();
+      };
     }
 
     function bind(selector, factory) {
@@ -1419,11 +1486,21 @@
     function doAuth(kind) {
       var nameInput = document.getElementById("loginName");
       var passInput = document.getElementById("loginPass");
+      var urlInput = document.getElementById("serverUrl");
+      if (urlInput) {
+        state.serverUrl = urlInput.value.trim().replace(/\/+$/, "");
+        account.url = null;
+        save();
+      }
       var name = nameInput ? nameInput.value.trim() : loginName;
       var pass = passInput ? passInput.value : loginPass;
       loginName = name; loginPass = pass;
       accountError = "";
-      var action = kind === "login" ? account.login(name, pass) : account.register(name, pass);
+
+      var targets = account.candidateUrls();
+      var action = kind === "login"
+        ? account.login(name, pass)
+        : account.register(name, pass);
       action.then(function () {
         save();
         return account.downloadSave();
@@ -1431,11 +1508,31 @@
         if (data && data.save) applyDict(data.save);
         ui.log(kind === "login" ? "Вход выполнен, прогресс загружен" : "Аккаунт создан", "unlock");
         nextProblem();
+        accountError = "";
         renderAll();
       }).catch(function (err) {
-        accountError = err.message || "не удалось";
+        accountError = explainAuthError(err, targets, kind);
         renderAll();
       });
+    }
+
+    /** Человеческое объяснение вместо технического «Failed to fetch». */
+    function explainAuthError(err, targets, kind) {
+      var secure = /^https:/i.test(window.location.protocol);
+      var allHttp = targets.length > 0 && targets.every(function (u) { return /^http:/i.test(u); });
+      if (secure && allHttp) {
+        return "Игра открыта по HTTPS, а сервер аккаунтов — по HTTP. Браузер блокирует " +
+          "такой запрос («Failed to fetch»). " + B.account.https_required_hint +
+          " Или укажите https-адрес сервера в поле выше.";
+      }
+      if (err && /имя|пароль|занят|минимум/i.test(err.message)) {
+        return err.message;
+      }
+      return (err && err.message ? err.message : "Не удалось связаться с сервером") +
+        ". Проверьте, что сервер запущен (bash tools/serve_accounts.sh), адрес верен " +
+        "и доступен с этого устройства" +
+        (secure ? ". Для телефона нужен IP компьютера в локальной сети, а не 127.0.0.1" : "") +
+        ".";
     }
 
     function syncToServer(silent) {

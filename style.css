@@ -79,11 +79,9 @@ html, body {
   min-width: 0;
 }
 
-.brand { display: flex; align-items: center; gap: 7px; margin-right: auto; min-width: 0; flex: 0 1 auto; }
+/* логотип без подписи: название игры живёт в заголовке вкладки */
+.brand { display: flex; align-items: center; margin-right: 2px; flex: none; }
 .brand-icon { width: 30px; height: 30px; border-radius: 8px; flex: none; }
-.brand-text { min-width: 0; overflow: hidden; }
-.brand-text b { display: block; font-size: 14px; line-height: 1.15; white-space: nowrap; }
-.brand-text small { display: none; color: var(--muted); font-size: 10px; }
 
 .stat {
   text-align: right;
@@ -111,6 +109,12 @@ html, body {
 .stat .money { color: var(--gold); }
 .stat .accent { color: var(--accent); }
 .stat .violet { color: var(--violet); }
+
+/* Деньги — самое важное в панели: отдаём им место, остальные сжимаются */
+.stat-money { flex: 1 1 auto; order: 1; }
+.stat-money b { font-size: clamp(15px, 4.6vw, 22px); }
+.stat-money small { color: #c8a24a; }
+#topbar .stat:not(.stat-money) { order: 2; }
 
 /* ================= игра ================= */
 #play { display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
@@ -331,6 +335,49 @@ html, body {
 }
 .row-fields input:focus { outline: none; border-color: var(--accent); }
 
+/* поле на всю ширину — адрес сервера аккаунтов */
+.full-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  background: #0d111a;
+  border: 2px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  padding: 9px;
+  font: inherit;
+  font-size: 13px;
+}
+.full-input:focus { outline: none; border-color: var(--accent); }
+.field-label { display: block; margin: 10px 0 4px; }
+
+/* компактная кнопка рядом с полем */
+.small-btn {
+  display: inline-block;
+  margin-top: 6px;
+  background: var(--panel-hi);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.small-btn:hover { border-color: var(--accent); }
+
+/* предупреждение: сервер недоступен, неверный адрес и т.п. */
+.warn {
+  margin: 6px 0;
+  padding: 8px 10px;
+  background: rgba(248, 81, 73, .1);
+  border: 1px solid var(--red);
+  border-radius: 8px;
+  color: #ffb3ae;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
 .big-btn {
   flex: none;
   width: 100%;
@@ -483,10 +530,8 @@ body.big-text .keypad button { font-size: clamp(19px, 6vw, 26px); }
   #menus { grid-area: menus; }
   /* вкладка «Игра» нужна только на телефоне */
   .tabs [data-tab="play"] { display: none; }
-  .brand-text small { display: block; }
   .stat b { font-size: 17px; }
-  .keypad button.wide { grid-column: span 1; }
-  .keypad button.wide + .wide { grid-column: span 1; }
+  .stat-money b { font-size: 24px; }
   .hint-line { display: block; color: #566072; font-size: 11px; margin-top: 8px; text-align: center; }
 }
 
@@ -502,9 +547,11 @@ body.big-text .keypad button { font-size: clamp(19px, 6vw, 26px); }
 /* совсем узкие экраны (старые телефоны, 320 px) */
 @media (max-width: 359px) {
   .tabs button { font-size: 10px; }
-  .brand-text { display: none; }
   .keypad { gap: 4px; }
   .keypad button { font-size: 16px; }
+  /* на 320 px место есть только у денег и логотипа */
+  .stat-mult { display: none; }
+  .stat:not(.stat-money) small { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
