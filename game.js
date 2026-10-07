@@ -335,12 +335,16 @@
   // ---------------------------------------------------------------- аккаунт
   var account = {
     url: null, username: null, token: null, lastError: null, customUrl: "",
+    discovered: [],          // адреса, найденные приложением в локальной сети
 
     /** Адреса, которые пробуем по очереди: заданный игроком, потом дефолтные. */
     candidateUrls: function () {
       var list = [];
       var custom = (state.serverUrl || "").trim() || (window.MATHIDLE_SERVER || "");
       if (custom) list.push(custom);
+      // то, что нашлось в сети, важнее 127.0.0.1: на телефоне 127.0.0.1 —
+      // это сам телефон, а не компьютер с игрой
+      for (var k = 0; k < this.discovered.length; k++) list.push(this.discovered[k]);
       var def = B.account.default_url || "";
       if (def) list.push(def);
       else {
@@ -353,6 +357,39 @@
         if (clean && !seen[clean]) { seen[clean] = 1; out.push(clean); }
       }
       return out;
+    },
+
+    /**
+     * В приложении на Android сервер аккаунтов ищется сам: нативная часть
+     * спрашивает по UDP, кто отвечает в сети, и передаёт адреса сюда.
+     * В браузере этого нет — остаётся поле в настройках.
+     */
+    discover: function (attempt) {
+      var self = this;
+      attempt = attempt || 0;
+      if (window.MathIdleNative && typeof window.MathIdleNative.findServers === "function") {
+        window.MathIdleNativeServers = function (urls) {
+          self.discovered = urls || [];
+          if (self.discovered.length && !state.serverUrl) {
+            // запоминаем находку, чтобы не искать каждый раз
+            state.serverUrl = self.discovered[0];
+            save();
+          }
+          if (activeTab() === "settings") renderAll();
+        };
+        try {
+          window.MathIdleNative.findServers();
+        } catch (err) {
+          // мост не ответил — работаем на введённый вручную адрес
+        }
+        return true;
+      }
+      // Моста пока нет: в приложении он появляется сразу, но на всякий
+      // случай пробуем ещё несколько раз.
+      if (attempt < 6) {
+        setTimeout(function () { self.discover(attempt + 1); }, 500);
+      }
+      return false;
     },
 
     signedIn: function () { return !!(this.token && this.username); },
@@ -1396,11 +1433,22 @@
     /** Адрес сервера аккаунтов — его надо задать, если игра открыта не с компьютера. */
     function serverUrlField() {
       var secure = /^https:/i.test(window.location.protocol);
+      var found = account.discovered.length
+        ? '<div class="small accent" style="margin-top:6px">Найдено в сети: ' +
+          escapeHtml(account.discovered.join(", ")) + "</div>"
+        : "";
+      var hint = account.discovered.length
+        ? "Найден сам, можно просто нажать «Регистрация»"
+        : (window.MathIdleNative
+            ? "Ищу сервер в сети… запусти его на компьютере: bash tools/serve_accounts.sh"
+            : "Укажи адрес компьютера, где запущен сервер");
       return '<label class="small field-label">Адрес сервера аккаунтов' +
         (secure ? " (нужен https://)" : "") + "</label>" +
         '<input id="serverUrl" class="full-input" type="text" ' +
         'placeholder="http://192.168.1.10:8766" value="' +
         escapeHtml(state.serverUrl) + '" spellcheck="false">' +
+        '<div class="small" style="margin-top:4px">' + hint + "</div>" +
+        found +
         '<button class="small-btn" data-save-url="1">Сохранить адрес</button>';
     }
 
@@ -1684,6 +1732,7 @@
         setTimeout(function () { syncViewport(); renderPlay(); }, 220);
       });
       renderEgg();
+      account.discover();          // в приложении сервер ищется сам
     }
 
     function renderAll() {
