@@ -437,8 +437,173 @@ def test_settings():
     check("окно скорости выключается", not st.setting("speed_gauge"))
 
 
+def test_local_account():
+    """Регистрация без сервера: компьютер может быть выключен."""
+    print("Аккаунт без сервера")
+    st = state.GameState(rng=random.Random(2))
+    check("сервера нет", st.account.ping() is False)
+
+    ok, message = st.register_local(" Vasya@Mail.RU ")
+    check("регистрация прошла без сервера", ok, message)
+    check("почта в нижнем регистре", st.local_email == "vasya@mail.ru",
+          st.local_email)
+    check("письмо сразу в ящике", len(st.local_letters) == 1,
+          len(st.local_letters))
+    letter = st.local_letters[0]
+    check("тема письма",
+          letter["subject"] == config.MAIL["welcome_subject"], letter["subject"])
+    check("награда 100 денег", letter["reward"] == 100.0, letter["reward"])
+    check("срок ровно трое суток",
+          abs(letter["expires_at"] - letter["created_at"] - 3 * 86400) < 0.001)
+
+    before = st.money
+    ok, message = st.claim_mail(letter["id"])
+    check("награда выдана сразу", ok and st.money == before + 100.0,
+          (ok, st.money))
+    ok, message = st.claim_mail(letter["id"])
+    check("второй раз не дают", not ok and st.money == before + 100.0, message)
+
+    # сохранение должно пережить перезапуск
+    back = state.GameState.from_dict(st.to_dict())
+    check("аккаунт пережил перезапуск", back.local_email == "vasya@mail.ru",
+          back.local_email)
+    check("письмо пережило перезапуск", len(back.local_letters) == 1)
+    check("и осталось отмеченным как полученное",
+          back.local_letters[0]["claimed"] is True)
+    check("пароль нигде не сохранился",
+          "password" not in str(back.to_dict()).lower()
+          or back.local_email not in str(back.to_dict()))
+
+    # Кнопка «Регистрация» без сервера создаёт аккаунт на устройстве
+    ui_ok = _ui_register_without_server()
+    check("кнопка регистрации работает и без сервера", ui_ok)
+
+    stale = state.GameState(rng=random.Random(2))
+    stale.register_local("a@b.ru")
+    stale.local_letters[0]["expires_at"] = time.time() - 1
+    ok, message = stale.claim_mail(stale.local_letters[0]["id"])
+    check("сгоревшее письмо не платит", not ok, message)
+    stale.purge_expired_letters()
+    check("и убирается из ящика", stale.local_letters == [], stale.local_letters)
+
+    bad = state.GameState(rng=random.Random(2))
+    ok, message = bad.register_local("не-почта")
+    check("мусор вместо почты отвергнут", not ok, message)
+
+    # на сервер переносится один раз и по паролю
+    sync = state.GameState(rng=random.Random(2))
+    sync.register_local("igrok@mail.ru")
+    ok, message = sync.sync_local_account("короткий")
+    check("короткий пароль не подходит", not ok, message)
+
+    check("почта нормализуется и на клиенте",
+          account_mod.normalize_email(" A.B+tag@Mail.RU ") == "a.b+tag@mail.ru",
+          account_mod.normalize_email(" A.B+tag@Mail.RU "))
+    check("мусор почтой не считается",
+          not account_mod.valid_email("не-почта") and
+          not account_mod.valid_email("a@b") and
+          account_mod.valid_email("vasya@mail.ru"))
+
+
+def _ui_register_without_server():
+    """Настольная кнопка «Регистрация» при выключенном сервере.
+
+    Раньше она просто показывала ошибку, и игрок делал вывод, что кнопка
+    сломана. Теперь аккаунт создаётся на устройстве.
+    """
+    os.environ["SDL_VIDEODRIVER"] = "dummy"
+    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    try:
+        import pygame
+
+        from mathidle import ui as ui_mod
+    except ImportError:
+        return False
+    pygame.init()
+    pygame.display.set_mode((1000, 700))
+    screen = ui_mod.GameUI(state.GameState(rng=random.Random(5)))
+    screen.tab = "settings"
+    screen._login_name = "offline@mail.ru"
+    screen._login_pass = "parol123"
+    screen.do_register()
+    st = screen.state
+    ok = bool(st.local_email) and len(st.local_letters) == 1
+    if ok:
+        st.claim_mail(st.local_letters[0]["id"])
+        ok = st.money >= 100.0
+    pygame.quit()
+    return ok
+
+
+def test_login_input():
+    """Ввод в поля аккаунта настольной версии.
+
+    Раньше буквы отбрасывались (в игре принимались только цифры), поля
+    оставались пустыми, и «Регистрация» отправляла на сервер пустоту —
+    кнопка выглядела нерабочей.
+    """
+    print("Ввод в поля аккаунта")
+    os.environ["SDL_VIDEODRIVER"] = "dummy"
+    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    try:
+        import pygame
+    except ImportError:
+        check("pygame доступен", False, "не установлен")
+        return
+    pygame.init()
+    pygame.display.set_mode((1000, 700))
+
+    from mathidle import ui as ui_mod
+
+    screen = ui_mod.GameUI(state.GameState(rng=random.Random(3)))
+    screen.tab = "settings"
+    screen._login_name = ""
+    screen._login_pass = ""
+    screen.focus_login_field = "name"
+
+    def type_text(text):
+        for ch in text:
+            event = pygame.event.Event(pygame.KEYDOWN,
+                                       key=pygame.K_a, unicode=ch, mod=0)
+            screen.on_key(event)
+
+    type_text("vasya@mail.ru")
+    check("почта набирается целиком", screen._login_name == "vasya@mail.ru",
+          repr(screen._login_name))
+    check("в пароль ничего не утекло", screen._login_pass == "",
+          repr(screen._login_pass))
+
+    screen.focus_login_field = "pass"
+    type_text("parol123")
+    check("пароль набирается", screen._login_pass == "parol123",
+          repr(screen._login_pass))
+
+    back = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_BACKSPACE,
+                              unicode="\b", mod=0)
+    screen.on_key(back)
+    check("Backspace стирает в пароле", screen._login_pass == "parol123"[:-1],
+          repr(screen._login_pass))
+
+    screen.focus_login_field = "name"
+    screen.on_key(back)
+    check("Backspace стирает в почте", screen._login_name == "vasya@mail.r",
+          repr(screen._login_name))
+
+    # цифры во время игры идут в ответ на пример, а не в поля
+    answer = state.GameState(rng=random.Random(3))
+    play = ui_mod.GameUI(answer)
+    play.tab = "play"
+    play.input = ""
+    play.on_key(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_7,
+                                   unicode="7", mod=0))
+    check("цифра во время игры идёт в ответ", play.input == "7", repr(play.input))
+    play.on_key(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_a,
+                                   unicode="a", mod=0))
+    check("буква в ответ не попадает", play.input == "7", repr(play.input))
+    pygame.quit()
+
+
 def test_mail():
-    print("Почта")
     cfg = config.MAIL
     check("награда 100 денег", cfg["reward_money"] == 100.0, cfg["reward_money"])
     check("срок ровно трое суток",
@@ -478,6 +643,8 @@ def main():
     test_account()
     test_settings()
     test_mail()
+    test_local_account()
+    test_login_input()
     test_flow()
     test_upgrade_ladder()
     print("=" * 60)

@@ -62,16 +62,17 @@ sleep 3
 
 echo "== проверка аккаунтов в $(basename "$CHROME") =="
 STATUS=0
-for MODE in up mail native down; do
-  # в сценарии down указываем заведомо закрытый порт: сервер не отвечает
+for MODE in up mail native down offline; do
+  # в сценариях down и offline указываем заведомо закрытый порт:
+  # сервера нет — проверяем, что игра живёт и регистрируется без него
   case "$MODE" in
     up)     TARGET_PORT="$PORT" ;;
     mail)   TARGET_PORT="$PORT" ;;
     native) TARGET_PORT="$PORT" ;;
-    down)
+    down|offline)
       if [ -n "$SKIP_DOWN" ]; then
         echo ""
-        echo "сценарий down — пропущен: порты$BUSY заняты"
+        echo "сценарий $MODE — пропущен: порты$BUSY заняты"
         continue
       fi
       TARGET_PORT="$DEAD_PORT"

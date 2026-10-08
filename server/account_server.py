@@ -57,7 +57,7 @@ except ImportError:
     # mathidle рядом с ним нет. Нужны всего два значения, поэтому берём их
     # отсюда; чтобы версия не расходилась с игрой, она подставляется при сборке.
     class _Config:
-        GAME = {"version": "1.2.7"}
+        GAME = {"version": "1.2.8"}
         ACCOUNT = {"session_token_days": 30}
 
     config = _Config()
@@ -72,37 +72,11 @@ TOKEN_DAYS = config.ACCOUNT["session_token_days"]
 MAX_SAVE_BYTES = 512 * 1024
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,24}$")
 DISCOVERY_TOKEN = "mathidle"
-# Почта — основной способ регистрации, поэтому проверяем её строже,
-# чем имя: одна почта равна одному аккаунту, и опечатка здесь обернётся
-# потерей доступа к прогрессу навсегда.
-EMAIL_RE = re.compile(
-    r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+@[A-Za-z0-9]"
-    r"(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
-    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
+# Правила почты общие с игрой: сервер должен отвергать ровно то же,
+# что и клиент, иначе правило «одна почта — один аккаунт» можно обойти.
+from mathidle.account import name_from_email, normalize_email, valid_email  # noqa: E402
+
 MAIL_LIFETIME = config.MAIL["expires_in_seconds"]
-
-
-def normalize_email(raw):
-    """Приводит почту к единому виду: без пробелов и целиком в нижний регистр.
-
-    « Vasya@Mail.RU » и «vasya@mail.ru» должны считаться одним адресом,
-    иначе правило «одна почта — один аккаунт» обходится регистром.
-    Формально по стандарту часть до @ регистрозависима, но на практике
-    почтовые провайдеры регистр не различают.
-    """
-    return str(raw or "").strip().strip("<>").strip().lower()
-
-
-def valid_email(raw):
-    text = normalize_email(raw)
-    return bool(EMAIL_RE.match(text)) and len(text) <= 254
-
-
-def name_from_email(email):
-    """Имя для показа берём из почты: до @, без цифр в начале."""
-    local = email.split("@", 1)[0]
-    local = re.sub(r"[^A-Za-z0-9_.-]+", "", local)[:20]
-    return local or "player"
 
 
 def mail_expires_at(now=None):

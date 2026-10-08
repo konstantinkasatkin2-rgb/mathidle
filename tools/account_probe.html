@@ -153,6 +153,53 @@ function pause(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     return;
   }
 
+  if (MODE === "offline") {
+    // Сервера нет — компьютер выключен. Регистрация всё равно обязана
+    // работать: аккаунт создаётся на устройстве, письмо с компенсацией
+    // приходит сразу, награду можно забрать.
+    d.querySelector('[data-tab="settings"]').click();
+    await pause(300);
+    d.getElementById("loginName").value = "off" + Date.now() + "@mail.ru";
+    d.getElementById("loginPass").value = "parol123";
+    d.querySelector("[data-register]").click();
+    await pause(2500);
+    // Аккаунт создан на устройстве: входа на сервер нет, но почта работает
+    var mailTab = d.querySelector('[data-tab="mail"]');
+    log("вкладка «Почта» открылась: " + (mailTab && !mailTab.disabled),
+        !!(mailTab && !mailTab.disabled));
+    mailTab.click();
+    await pause(500);
+    var html = d.querySelector("#panel").innerHTML;
+    log("письмо на месте: " +
+        /Компенсация за утраченный прогресс/.test(html),
+        /Компенсация за утраченный прогресс/.test(html));
+    log("помечено «на этом устройстве»: " + /на этом устройстве/.test(html),
+        /на этом устройстве/.test(html));
+    var before = d.getElementById("money").textContent;
+    var claim = d.querySelector("[data-claim]");
+    if (!claim) {
+      log("кнопка получения найдена", false);
+    } else {
+      claim.click();
+      await pause(800);
+      var after = d.getElementById("money").textContent;
+      log("деньги сразу на устройстве: " + before + " -> " + after,
+          before !== after);
+      d.querySelector('[data-tab="mail"]').click();
+      await pause(400);
+      log("кнопки больше нет: " +
+          !/Забрать награду/.test(d.querySelector("#panel").innerHTML));
+    }
+    d.querySelector('[data-tab="settings"]').click();
+    await pause(400);
+    var setHtml = d.querySelector("#panel").innerHTML;
+    log("в настройках виден перенос на сервер: " +
+        /Перенести на сервер/.test(setHtml), /Перенести на сервер/.test(setHtml));
+    out.className = failures ? "bad" : "ok";
+    document.title = failures ? "ACCOUNT-FAIL" : "ACCOUNT-OK";
+    return;
+  }
+
   d.querySelector('[data-tab="settings"]').click();
   await pause(300);
 
@@ -171,20 +218,27 @@ function pause(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     return pause(300);
   }
 
-  // 1. регистрация
-  fill(USER, "parol123");
-  click("[data-register]");
-  var e1 = await waitFor(d, 15000);
+  // 1. вход, если сервера нет
   if (MODE === "down") {
-    // сервера нет — регистрация обязана не пройти, и это правильно
-    var clear = /сервер не отвечает/i.test(e1) && !/failed to fetch/i.test(e1);
-    log("сервер недоступен — сообщение понятное: " + clear, clear);
-    log("игрок не попал в аккаунт: " + !/ВЫХОД ВЫПОЛНЕН/.test(e1),
-      !/ВЫХОД ВЫПОЛНЕН/.test(e1));
+    // Регистрация без сервера создаёт аккаунт на устройстве — это
+    // проверяет сценарий offline. А «Войти» откатиться не может: входить
+    // некуда, и игра обязана честно об этом сказать.
+    fill(USER, "parol123");
+    click("[data-login]");
+    var login = await waitFor(d, 15000);
+    var clear = /сервер не отвечает/i.test(login) &&
+      !/failed to fetch/i.test(login);
+    log("вход без сервера — сообщение понятное: " + clear, clear);
+    log("игрок не попал в аккаунт: " + !/ВЫХОД ВЫПОЛНЕН/.test(login),
+      !/ВЫХОД ВЫПОЛНЕН/.test(login));
     out.className = failures ? "bad" : "ok";
     document.title = failures ? "ACCOUNT-FAIL" : "ACCOUNT-OK";
     return;
   }
+
+  fill(USER, "parol123");
+  click("[data-register]");
+  var e1 = await waitFor(d, 15000);
   log("регистрация нового игрока: " + e1, /ВЫХОД ВЫПОЛНЕН/.test(e1));
 
   await signOut();

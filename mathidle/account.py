@@ -9,6 +9,7 @@
 
 import json
 import os
+import re
 import socket
 import urllib.error
 import urllib.request
@@ -16,6 +17,38 @@ import urllib.request
 from . import config
 
 TIMEOUT = 6.0
+
+# Почта — основной способ регистрации, поэтому проверяем её строже,
+# чем имя: одна почта равна одному аккаунту, а опечатка обернётся потерей
+# доступа к прогрессу навсегда.
+EMAIL_RE = re.compile(
+    r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+@[A-Za-z0-9]"
+    r"(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
+
+
+def normalize_email(raw):
+    """Почта в едином виде: без пробелов и целиком в нижнем регистре.
+
+    « Vasya@Mail.RU » и «vasya@mail.ru» должны считаться одним адресом,
+    иначе правило «одна почта — один аккаунт» обходится регистром.
+    Формально по стандарту часть до @ регистрозависима, но на практике
+    провайдеры регистр не различают.
+    """
+    return str(raw or "").strip().strip("<>").strip().lower()
+
+
+def valid_email(raw):
+    """Похоже ли на адрес электронной почты."""
+    text = normalize_email(raw)
+    return bool(EMAIL_RE.match(text)) and len(text) <= 254
+
+
+def name_from_email(email):
+    """Имя для показа берём из почты: до @, без мусора."""
+    local = normalize_email(email).split("@", 1)[0]
+    local = re.sub(r"[^A-Za-z0-9_.-]+", "", local)[:20]
+    return local or "player"
 
 
 class AccountError(Exception):

@@ -517,8 +517,14 @@
              tests_passed: 0, idle_examples: 0, best_streak: 0, ascensions: 0, femboy: false },
     settings: {},
     serverUrl: "",          // адрес сервера аккаунтов (настраивается в «Настройках»)
-    mail: [],               // письма в ящике аккаунта
+    mail: [],               // письма с сервера
     mailUnread: 0,
+    // Аккаунт без сервера: компьютер может быть выключен, а аккаунт,
+    // письмо с компенсацией и награда работают всё равно.
+    localEmail: "",
+    localSince: 0,
+    localSynced: false,
+    localLetters: [],
     current: null,
     shownAt: 0,
     test: null,
@@ -937,6 +943,10 @@
       settings: state.settings,
       server_url: state.serverUrl,
       mail: state.mail,
+      local_email: state.localEmail,
+      local_since: state.localSince,
+      local_synced: state.localSynced,
+      local_letters: state.localLetters,
       stats: state.stats,
       play_time: state.playTime,
       account_username: account.username,
@@ -979,6 +989,10 @@
     });
     state.serverUrl = String(data.server_url || "");
     state.mail = Array.isArray(data.mail) ? data.mail : [];
+    state.localEmail = String(data.local_email || "");
+    state.localSince = Number(data.local_since) || 0;
+    state.localSynced = !!data.local_synced;
+    state.localLetters = Array.isArray(data.local_letters) ? data.local_letters : [];
     state.playTime = Number(data.play_time) || 0;
     if (data.account_token) {
       account.username = data.account_username;
@@ -1020,7 +1034,7 @@
     var events = [];
     var floaters = [];
     var eggDismissed = false;
-    var loginName = "", loginPass = "", accountError = "";
+    var loginName = "", loginPass = "", accountError = "", syncPassDraft = "";
 
     var KIND_COLORS = {
       buy: "var(--accent)", unlock: "var(--gold)", pass: "var(--green)",
@@ -1164,9 +1178,9 @@
     // ------------------------------------------------------------- вкладки
     function tabLocked(id) {
       if (id === "play") return false;
-      // Почта появляется только после регистрации: без аккаунта её некуда
-      // получать, и пустая вкладка только пугает.
-      if (id === "mail") return !account.signedIn();
+      // Почта появляется после регистрации — на устройстве или на сервере.
+      // Без аккаунта её некуда получать, и пустая вкладка только пугает.
+      if (id === "mail") return !account.signedIn() && !state.localEmail;
       if (id === "shop" && !shopUnlocked()) return true;
       if (id === "prestige" && state.prestigeCount === 0 && !prestigeUnlocked()) return true;
       return false;
@@ -1223,6 +1237,7 @@
       el.panel.innerHTML = html;
       bindPanel();
       el.panel.scrollTop = 0;
+      if (tab === "settings") restoreLoginFields();
       syncTabs();
     }
 
@@ -1375,12 +1390,13 @@
 
     /** Почта аккаунта: письма и кнопка получения награды. */
     function panelMail() {
-      if (!account.signedIn()) {
+      if (!account.signedIn() && !state.localEmail) {
         return '<div class="info-card"><h3>Почта</h3><div class="line">' +
           "<span>Почта появляется после регистрации</span>" +
           '<span></span></div></div>';
       }
-      var letters = state.mail || [];
+      purgeExpired();
+      var letters = allLetters();
       var out = '<div class="small" style="margin-bottom:8px">' +
         "Письма живут " + Math.round(B.mail.expires_in_seconds / 86400) +
         " суток с момента отправки. Срок считает сервер.</div>";
@@ -1390,6 +1406,7 @@
           '<div class="line"><span>Новых писем нет</span><span></span></div></div>';
       }
 
+      letters.sort(function (a, b) { return b.created_at - a.created_at; });
       for (var i = 0; i < letters.length; i++) {
         var letter = letters[i];
         var left = letter.expires_at - Math.floor(Date.now() / 1000);
@@ -1402,6 +1419,9 @@
           '<div class="small" style="margin:6px 0">' + body + "</div>" +
           '<div class="line"><span>Награда</span><span class="gold">' +
           fmtMoney(letter.reward) + "</span></div>" +
+          (letter.local
+            ? '<div class="line"><span>Где</span><span>на этом устройстве</span></div>'
+            : "") +
           '<div class="line"><span>' + leftText + "</span><span></span></div>";
         if (letter.claimed) {
           out += '<div class="small accent" style="margin-top:8px">Награда получена</div>';
@@ -1453,7 +1473,19 @@
     }
 
     function panelSettings() {
-      var out = "<h4>Отображение</h4>";
+      // Аккаунт внизу списка настроек, а на телефоне туда надо доскроллить.
+      // Короткая зацепка сверху: видно, что вход есть, и можно прыгнуть.
+      var out = account.signedIn()
+        ? '<div class="info-card" style="padding:10px 12px">' +
+          '<div class="line"><span>Аккаунт</span><span class="accent">' +
+          escapeHtml(account.username) + "</span></div></div>"
+        : '<div class="info-card" style="padding:10px 12px">' +
+          '<div class="line"><span>Аккаунт</span><span>' +
+          (account.discovered.length || state.serverUrl ? "сервер найден" : "не создан") +
+          "</span></div>" +
+          '<button class="small-btn" data-jump-login="1">Войти или зарегистрироваться</button>' +
+          "</div>";
+      out += "<h4>Отображение</h4>";
       B.display_settings.forEach(function (item) {
         var on = setting(item.id);
         out += '<button class="item' + (on ? " affordable" : "") + '" data-setting="' + item.id + '">' +
@@ -1462,6 +1494,20 @@
       });
 
       out += "<h4>Аккаунт</h4>";
+      // Аккаунт, созданный на устройстве, однажды можно отдать серверу —
+      // тогда прогресс будет виден и на другом устройстве.
+      if (state.localEmail && !state.localSynced && !account.signedIn()) {
+        out += '<div class="info-card"><div class="line"><span>Почта</span>' +
+          '<span>' + escapeHtml(state.localEmail) + "</span></div>" +
+          '<div class="small" style="margin:6px 0">Аккаунт создан на этом ' +
+          "устройстве. Прогресс никуда не девается, но на другое устройство " +
+          "пока не переносится — для этого нужен сервер.</div>" +
+          '<input id="syncPass" class="full-input" type="password" ' +
+          'placeholder="пароль от этого аккаунта" maxlength="64" ' +
+          'autocomplete="current-password">' +
+          '<button class="small-btn" data-sync-local="1">Перенести на сервер</button>' +
+          "</div>";
+      }
       if (account.signedIn()) {
         out += '<div class="small accent">Вы вошли как ' + account.username +
           " · прогресс синхронизируется</div>" +
@@ -1518,6 +1564,66 @@
       return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
+    /** Показывает сообщение об ошибке: иначе оно остаётся за пределами
+     *  экрана, и кнопка выглядит «нерабочей». */
+    function revealWarn() {
+      var warn = el.panel.querySelector(".warn");
+      if (!warn) return;
+      var panelRect = el.panel.getBoundingClientRect();
+      var warnRect = warn.getBoundingClientRect();
+      if (warnRect.top < panelRect.top) {
+        el.panel.scrollTop -= (panelRect.top - warnRect.top) + 10;
+      } else if (warnRect.bottom > panelRect.bottom) {
+        el.panel.scrollTop += (warnRect.bottom - panelRect.bottom) + 10;
+      }
+    }
+
+    /** Возвращает введённые почту и пароль после перерисовки панели. */
+    function restoreLoginFields() {
+      var nameField = document.getElementById("loginName");
+      var passField = document.getElementById("loginPass");
+      if (nameField && loginName && !nameField.value) nameField.value = loginName;
+      if (passField && loginPass && !passField.value) passField.value = loginPass;
+    }
+
+    /** Переносит местный аккаунт на сервер: пароль спрашивается здесь. */
+    function doSyncLocal() {
+      var field = document.getElementById("syncPass");
+      var pass = field ? field.value : "";
+      syncPassDraft = pass;
+      syncLocalAccount(pass).then(function (result) {
+        accountError = result.ok ? "" : result.message;
+        if (result.ok) {
+          ui.log(result.message, "unlock");
+          save();
+          renderAll();
+        } else {
+          renderAll();
+          revealWarn();
+          restoreSyncField();
+        }
+      }).catch(function (err) {
+        accountError = err && err.message ? err.message : "не удалось перенести";
+        renderAll();
+        revealWarn();
+      });
+    }
+
+    function restoreSyncField() {
+      var field = document.getElementById("syncPass");
+      if (field) field.value = syncPassDraft;
+    }
+
+    /** Прокручивает панель к форме входа. */
+    function jumpToLogin() {
+      var field = document.getElementById("loginName");
+      if (!field) return;
+      var panelRect = el.panel.getBoundingClientRect();
+      var fieldRect = field.getBoundingClientRect();
+      el.panel.scrollTop += (fieldRect.top - panelRect.top) - 12;
+      if (field.focus) field.focus();
+    }
+
     function bindPanel() {
       bind("[data-buy]", function (node) {
         return function () { flash(buyUpgrade(node.getAttribute("data-buy")) ? "ok" : "bad"); renderAll(); };
@@ -1551,12 +1657,16 @@
         flash(doPrestige() ? "ok" : "bad");
         renderAll();
       };
-      var startBtn = el.panel.querySelector("[data-start]");
-      if (startBtn) startBtn.onclick = function () {
-        if (startTest(startBtn.getAttribute("data-start"))) {
-          input = ""; view = "play"; renderAll();   // сразу к примеру
-        }
-      };
+      // Кнопок «Начать» несколько — по одной на вид контрольной, — и
+      // обработчик надо вешать на каждую: querySelector брал только первую,
+      // поэтому итоговая и экзамен не нажимались вовсе.
+      bind("[data-start]", function (node) {
+        return function () {
+          if (startTest(node.getAttribute("data-start"))) {
+            input = ""; view = "play"; renderAll();   // сразу к примеру
+          }
+        };
+      });
       var abortBtn = el.panel.querySelector("[data-abort]");
       if (abortBtn) abortBtn.onclick = function () {
         var res = abortTest();
@@ -1586,14 +1696,40 @@
       bind("[data-claim]", function (node) {
         return function () { doClaim(node.getAttribute("data-claim")); };
       });
+      bind("[data-jump-login]", function () {
+        return function () { jumpToLogin(); };
+      });
+      bind("[data-sync-local]", function () {
+        return function () { doSyncLocal(); };
+      });
     }
 
     /** Забирает награду за письмо: деньги приходят от сервера. */
     function doClaim(mailId) {
-      function api(path, method, payload) {
-        return account.tryUrls(path, method, payload, account.token);
+      // Местное письмо живёт на устройстве: сервер про него и не знает.
+      var local = findLocalLetter(mailId);
+      if (local) {
+        if (local.claimed) return;
+        var now = Math.floor(Date.now() / 1000);
+        if (local.expires_at <= now) {
+          state.localLetters = state.localLetters.filter(function (item) {
+            return item.id !== local.id;
+          });
+          save();
+          renderAll();
+          return;
+        }
+        local.claimed = true;
+        state.money += local.reward;
+        state.runEarned += local.reward;
+        state.stats.earned += local.reward;
+        ui.log("Письмо вскрыто: +" + fmtMoney(local.reward), "unlock");
+        save();
+        renderAll();
+        return;
       }
-      api("/api/mail/claim", "POST", { id: Number(mailId) })
+      account.tryUrls("/api/mail/claim", "POST", { id: Number(mailId) },
+        account.token)
         .then(function (data) {
           var reward = Number(data.reward) || 0;
           if (reward > 0) {
@@ -1611,7 +1747,94 @@
         .catch(function (err) {
           accountError = err && err.message ? err.message : "не удалось забрать";
           renderAll();
+          revealWarn();
         });
+    }
+
+    function findLocalLetter(mailId) {
+      for (var i = 0; i < state.localLetters.length; i++) {
+        if (String(state.localLetters[i].id) === String(mailId)) {
+          return state.localLetters[i];
+        }
+      }
+      return null;
+    }
+
+    function allLetters() {
+      return state.localLetters.concat(state.mail || []);
+    }
+
+    /* Правила почты — те же, что на сервере: правило «одна почта — один
+   аккаунт» не должно зависеть от того, кто проверяет адрес. */
+  var EMAIL_RE = /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
+
+  function normalizeEmail(raw) {
+    return String(raw == null ? "" : raw).replace(/^\s+|\s+$/g, "")
+      .replace(/^<|>$/g, "").replace(/^\s+|\s+$/g, "").toLowerCase();
+  }
+
+  function validEmail(raw) {
+    var text = normalizeEmail(raw);
+    return EMAIL_RE.test(text) && text.length <= 254;
+  }
+
+  /** Аккаунт на устройстве: работает без сервера целиком. */
+    function registerLocal(email) {
+      var address = normalizeEmail(email);
+      if (!validEmail(address)) {
+        return { ok: false, message: "Почта не похожа на адрес. Пример: vasya@mail.ru" };
+      }
+      state.localEmail = address;
+      state.localSince = Date.now() / 1000;
+      var now = Math.floor(Date.now() / 1000);
+      state.localLetters.push({
+        id: "local-" + now,
+        subject: B.mail.welcome_subject,
+        body: B.mail.welcome_body,
+        reward: B.mail.reward_money,
+        created_at: now,
+        expires_at: now + B.mail.expires_in_seconds,
+        claimed: false,
+        local: true,
+      });
+      purgeExpired();
+      ui.log("Аккаунт создан на этом устройстве", "unlock");
+      return {
+        ok: true,
+        message: "Аккаунт создан. Письмо с компенсацией уже в почте — " +
+          "награду можно забрать прямо сейчас",
+      };
+    }
+
+    function purgeExpired() {
+      var now = Math.floor(Date.now() / 1000);
+      state.localLetters = (state.localLetters || []).filter(function (item) {
+        return item.expires_at > now;
+      });
+    }
+
+    /** Переносит местный аккаунт на сервер — один раз, по паролю. */
+    function syncLocalAccount(password) {
+      if (!state.localEmail) {
+        return Promise.resolve({ ok: false, message: "Местного аккаунта нет" });
+      }
+      if (!password || password.length < 6) {
+        return Promise.resolve({ ok: false, message: "Пароль минимум 6 символов" });
+      }
+      var address = state.localEmail;
+      return account.register(address, password).catch(function (err) {
+        if (!/уже есть аккаунт/i.test(err.message || "")) {
+          throw err;
+        }
+        return account.login(address, password);
+      }).then(function () {
+        state.localSynced = true;
+        loginPass = "";
+        save();
+        return refreshMail();
+      }).then(function () {
+        return { ok: true, message: "Аккаунт перенесён на сервер" };
+      });
     }
 
     /** Забирает список писем с сервера. */
@@ -1667,8 +1890,28 @@
       }).then(function () {
         renderAll();
       }).catch(function (err) {
+        // Регистрация не должна упираться в включённый компьютер: если
+        // сервера нет, аккаунт создаётся на устройстве и письмо с
+        // компенсацией всё равно приходит.
+        if (kind === "register" && err && err.unreachable) {
+          var local = registerLocal(name);
+          accountError = local.ok ? "" : local.message;
+          save();
+          renderAll();
+          revealWarn();
+          restoreLoginFields();
+          if (local.ok) {
+            ui.log(local.message, "unlock");
+            setTab("mail");
+          }
+          return;
+        }
         accountError = explainAuthError(err, targets, kind);
         renderAll();
+        // Панель перерисовалась — показываем сообщение и возвращаем
+        // то, что игрок уже набрал: иначе пришлось бы вводить заново.
+        revealWarn();
+        restoreLoginFields();
       });
     }
 

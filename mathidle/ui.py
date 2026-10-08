@@ -217,6 +217,9 @@ class GameUI:
                 self.running = False
             return
         if event.key == pygame.K_TAB:
+            if self.typing_login():
+                self._login_switch()   # на настройках Tab переключает поля
+                return
             order = [t[0] for t in TABS]
             self.tab = order[(order.index(self.tab) + 1) % len(order)]
             return
@@ -224,18 +227,80 @@ class GameUI:
             self.tab = TABS[event.key - pygame.K_1][0]
             return
         if event.key == pygame.K_BACKSPACE:
-            self.input = self.input[:-1]
+            if self.typing_login():
+                self._login_backspace()
+            else:
+                self.input = self.input[:-1]
             return
         if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
-            self.press_enter()
+            if self.typing_login():
+                self._login_submit()
+            else:
+                self.press_enter()
             return
         if event.key in (pygame.K_DELETE,):
-            self.input = ""
+            if self.typing_login():
+                self._login_clear()
+            else:
+                self.input = ""
             return
         ch = event.unicode
-        if ch and (ch.isdigit() or ch in "-.,"):
+        if not ch or not ch.isprintable():
+            return
+        if self.typing_login():
+            self._login_type(ch)
+            return
+        if ch.isdigit() or ch in "-.,":
             if len(self.input) < 8:
                 self.input += ch
+
+    # ------------------------------------------------------------------
+    # Ввод в поля аккаунта (почта и пароль)
+    # ------------------------------------------------------------------
+    # На вкладке «Настройки» ввод идёт не в ответ на пример, а в поля
+    # аккаунта: раньше буквы отбрасывались, поля оставались пустыми, и
+    # «Регистрация» отправляла на сервер пустоту — кнопка выглядела
+    # нерабочей.
+    LOGIN_CHARS = set("abcdefghijklmnopqrstuvwxyz"
+                      "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                      "0123456789@.+-_")
+
+    def typing_login(self):
+        """Ввод сейчас идёт в поля аккаунта?"""
+        return self.tab == "settings" and not self.state.account.signed_in
+
+    def _login_type(self, ch):
+        if ch not in self.LOGIN_CHARS:
+            return
+        if self.focus_login_field == "name":
+            if len(self._login_name) >= 120:
+                return
+            self._login_name += ch
+        else:
+            if len(self._login_pass) >= 64:
+                return
+            self._login_pass += ch
+
+    def _login_backspace(self):
+        if self.focus_login_field == "name":
+            self._login_name = self._login_name[:-1]
+        else:
+            self._login_pass = self._login_pass[:-1]
+
+    def _login_clear(self):
+        if self.focus_login_field == "name":
+            self._login_name = ""
+        else:
+            self._login_pass = ""
+
+    def _login_submit(self):
+        """Enter в полях: сначала пробуем войти — так привычнее."""
+        self.do_login()
+
+    def _login_switch(self):
+        """Tab на вкладке настроек переключает поля, а не вкладки."""
+        self.focus_login_field = ("pass" if self.focus_login_field == "name"
+                                  else "name")
 
     def press_enter(self):
         if not self.input:
@@ -318,6 +383,15 @@ class GameUI:
         for button in self._pending:
             if button.enabled and button.rect.collidepoint(pos):
                 self.activate(button)
+                return
+        # Клик по полю почты или парола переводит ввод туда
+        rects = getattr(self, "_login_rects", None)
+        if rects and not self.state.account.signed_in:
+            if rects[0].collidepoint(pos):
+                self.focus_login_field = "name"
+                return
+            if rects[1].collidepoint(pos):
+                self.focus_login_field = "pass"
                 return
         self.input = ""
 
@@ -1130,6 +1204,23 @@ class GameUI:
             small.render("На одну почту — один аккаунт", True, MUTED),
             (rect.x + 4, y))
         y += 24
+
+        # Аккаунт на устройстве: его можно отдать серверу, когда тот появится
+        if st.local_email and not st.local_synced and not st.account.signed_in:
+            canvas.blit(
+                small.render(f"Аккаунт на этом устройстве: {st.local_email}",
+                             True, GOLD), (rect.x + 4, y))
+            y += 20
+            canvas.blit(
+                small.render("Перенести на сервер: введи тот же пароль",
+                             True, MUTED), (rect.x + 4, y))
+            y += 26
+            btn = Button(pygame.Rect(rect.x, y, 240, 40), "Перенести на сервер",
+                         "", BLUE, True)
+            btn.action = self.do_sync_local
+            btn.draw(canvas, self.fonts)
+            self._pending.append(btn)
+            y += 48
         if st.account.last_error:
             canvas.blit(small.render("сервер: " + st.account.last_error[:70], True, RED),
                         (rect.x + 4, y))
@@ -1153,17 +1244,31 @@ class GameUI:
         field_w = (rect.w - 10) // 2
         name_rect = pygame.Rect(rect.x, y, field_w, 40)
         pass_rect = pygame.Rect(rect.x + field_w + 10, y, field_w, 40)
+        # запоминаем прямоугольники, чтобы кликом выбирать поле
+        self._login_rects = (name_rect, pass_rect)
+        focused = self.focus_login_field
         pygame.draw.rect(canvas, BG, name_rect, border_radius=8)
-        pygame.draw.rect(canvas, LINE, name_rect, width=2, border_radius=8)
+        pygame.draw.rect(canvas, ACCENT if focused == "name" else LINE,
+                         name_rect, width=2, border_radius=8)
         pygame.draw.rect(canvas, BG, pass_rect, border_radius=8)
-        pygame.draw.rect(canvas, LINE, pass_rect, width=2, border_radius=8)
-        canvas.blit(body.render(self._login_name or "почта: vasya@mail.ru",
-                                True, TEXT if self._login_name else MUTED),
+        pygame.draw.rect(canvas, ACCENT if focused == "pass" else LINE,
+                         pass_rect, width=2, border_radius=8)
+        name_text = self._login_name or "почта: vasya@mail.ru"
+        if focused == "name":
+            name_text += "▌"          # курсор: видно, куда печатать
+        canvas.blit(body.render(name_text, True,
+                                TEXT if self._login_name else MUTED),
                     (name_rect.x + 10, name_rect.y + 11))
         pass_text = "•" * len(self._login_pass) if self._login_pass else "пароль"
-        canvas.blit(body.render(pass_text, True, TEXT if self._login_pass else MUTED),
+        if focused == "pass":
+            pass_text += "▌"
+        canvas.blit(body.render(pass_text, True,
+                                TEXT if self._login_pass else MUTED),
                     (pass_rect.x + 10, pass_rect.y + 11))
-        y += 48
+        canvas.blit(
+            small.render("Tab переключает поле · Enter — войти", True, MUTED),
+            (rect.x + 4, y + 44))
+        y += 62
         btn = Button(pygame.Rect(rect.x, y, field_w, 42), "Войти", "", ACCENT, True)
         btn.action = self.do_login
         btn.draw(canvas, self.fonts)
@@ -1192,12 +1297,16 @@ class GameUI:
         y += 26
 
         st.refresh_mail()
-        letters = st.mail
+        st.purge_expired_letters()
+        # Письма бывают и с сервера, и созданные на этом устройстве:
+        # аккаунт можно завести без сервера, тогда письмо тоже местное.
+        letters = st.local_letters + st.mail
         if not letters:
             canvas.blit(small.render("Писем нет", True, MUTED), (rect.x + 4, y))
             return
 
-        for letter in letters:
+        for letter in sorted(letters, key=lambda item: item["created_at"],
+                             reverse=True):
             left = letter["expires_at"] - time.time()
             claimed = letter["claimed"]
             title = letter["subject"]
@@ -1205,6 +1314,7 @@ class GameUI:
                         (rect.x + 4, y))
             y += 22
             reward = economy.fmt_money(letter["reward"])
+            where = " · на этом устройстве" if letter.get("local") else ""
             if claimed:
                 canvas.blit(small.render(f"Награда {reward} получена", True, GREEN),
                             (rect.x + 4, y))
@@ -1215,8 +1325,9 @@ class GameUI:
                 y += 20
             else:
                 canvas.blit(
-                    small.render(f"Награда {reward} · сгорит через {_left_text(left)}",
-                                 True, MUTED), (rect.x + 4, y))
+                    small.render(
+                        f"Награда {reward} · сгорит через {_left_text(left)}{where}",
+                        True, MUTED), (rect.x + 4, y))
                 y += 24
                 btn = Button(pygame.Rect(rect.x, y, 240, 40), "Забрать награду",
                              "", GOLD, True)
@@ -1281,8 +1392,33 @@ class GameUI:
 
     def do_register(self):
         ok, message = self.state.register(self._login_name, self._login_pass)
+        if ok:
+            self._account_error = ""
+            self.state.log(message, "unlock")
+            self._login_name = ""
+            self._login_pass = ""
+            return
+        # Сервера нет — регистрация всё равно должна работать: аккаунт
+        # создаётся на устройстве, а на сервер переносится позже.
+        if not self.state.account.signed_in and not self.state.account.ping():
+            local_ok, local_message = self.state.register_local(self._login_name)
+            if local_ok:
+                self._account_error = ""
+                self.state.log(local_message, "unlock")
+                self._login_name = ""
+                self._login_pass = ""
+                return
+            self._account_error = local_message
+            return
+        self._account_error = message
+
+    def do_sync_local(self):
+        """Переносит местный аккаунт на сервер — пароль спрашивается здесь."""
+        ok, message = self.state.sync_local_account(self._login_pass)
         self._account_error = "" if ok else message
         if ok:
+            self._login_name = ""
+            self._login_pass = ""
             self.state.log(message, "unlock")
 
     def do_sign_out(self):

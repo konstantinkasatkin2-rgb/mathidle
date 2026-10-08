@@ -71,8 +71,14 @@ class GameState:
         self.account = account_mod.AccountClient()
         self.account_token = None
         self.account_username = None
-        self.mail = []            # письма из ящика аккаунта
+        self.mail = []            # письма с сервера
         self.mail_unread = 0     # сколько без награды
+        # Регистрация без сервера: аккаунт живёт на устройстве, пока не
+        # появится сервер, которому его можно отдать.
+        self.local_email = ""    # почта местного аккаунта
+        self.local_since = 0.0
+        self.local_synced = False
+        self.local_letters = []  # письма, созданные на устройстве
         self._last_sync = 0.0
         self._last_save = 0.0
         self._clock = 0.0
@@ -651,7 +657,15 @@ class GameState:
         return letters
 
     def claim_mail(self, mail_id):
-        """Забирает награду за письмо и начисляет деньги."""
+        """Забирает награду за письмо и начисляет деньги.
+
+        Письма бывают серверные (аккаунт на сервере) и местные (регистрация
+        без сервера). Награда отдаётся один раз: сервер следит сам, а для
+        местных писем — отметка в сохранении.
+        """
+        letter = self.find_letter(mail_id)
+        if letter and letter.get("local"):
+            return self.claim_local_letter(letter)
         if not self.account.signed_in:
             return False, "Сначала войди в аккаунт"
         try:
@@ -664,6 +678,101 @@ class GameState:
             self.sync_to_server(silent=True)
             return True, f"Получено {economy.fmt_money(reward)}"
         return False, "В письме нет награды"
+
+    def find_letter(self, mail_id):
+        """Письмо по id: сперва местные, потом серверные."""
+        for letter in self.local_letters:
+            if str(letter.get("id")) == str(mail_id):
+                return letter
+        for letter in self.mail:
+            if str(letter.get("id")) == str(mail_id):
+                return letter
+        return None
+
+    # ------------------------------------------------------------------
+    # Регистрация без сервера
+    #
+    # Раньше аккаунт жил только на сервере, поэтому при выключенном
+    # компьютере зарегистрироваться было негде. Теперь аккаунт создаётся
+    # сразу на устройстве: прогресс защищён от потери вместе с игрой, а на
+    # сервер переносится позже — один раз, с подтверждением пароля.
+    # ------------------------------------------------------------------
+    def register_local(self, email):
+        """Регистрация на устройстве, без сервера."""
+        address = account_mod.normalize_email(email)
+        if not account_mod.valid_email(address):
+            return False, "Почта не похожа на адрес. Пример: vasya@mail.ru"
+        if self.account.signed_in:
+            return False, "Аккаунт уже есть"
+        self.local_email = address
+        self.local_since = time.time()
+        letter = self.make_local_letter()
+        if letter:
+            self.local_letters.append(letter)
+        self.log("Аккаунт создан на этом устройстве", "unlock")
+        return True, ("Аккаунт создан. Письмо с компенсацией уже в почте — "
+                      "награду можно забрать прямо сейчас")
+
+    def make_local_letter(self):
+        """Письмо с компенсацией, срок — ровно трое суток."""
+        now = time.time()
+        return {
+            "id": "local-%d" % int(now),
+            "subject": config.MAIL["welcome_subject"],
+            "body": config.MAIL["welcome_body"],
+            "reward": config.MAIL["reward_money"],
+            "created_at": now,
+            "expires_at": now + config.MAIL["expires_in_seconds"],
+            "claimed": False,
+            "local": True,
+        }
+
+    def claim_local_letter(self, letter):
+        """Награда за местное письмо — один раз, отметка в сохранении."""
+        if letter.get("claimed"):
+            return False, "Награда уже получена"
+        if letter["expires_at"] <= time.time():
+            self.local_letters = [item for item in self.local_letters
+                                  if item is not letter]
+            return False, "Письмо сгорело"
+        letter["claimed"] = True
+        self.credit(letter["reward"])
+        return True, f"Получено {economy.fmt_money(letter['reward'])}"
+
+    def purge_expired_letters(self, now=None):
+        """Убирает сгоревшие письма: и серверные, и местные."""
+        now = now if now is not None else time.time()
+        self.local_letters = [item for item in self.local_letters
+                              if item["expires_at"] > now]
+
+    def sync_local_account(self, password):
+        """Переносит местный аккаунт на сервер.
+
+        Пароль не хранится на устройстве — его спрашивают здесь, один раз.
+        Если такой почты на сервере ещё нет — регистрируем, если есть —
+        пробуем войти: вдруг аккаунт завели с другого устройства.
+        """
+        if not self.local_email:
+            return False, "Местного аккаунта нет"
+        if len(password) < 6:
+            return False, "Пароль минимум 6 символов"
+        try:
+            self.account.register(self.local_email, password)
+        except account_mod.AccountError as exc:
+            if "уже есть аккаунт" not in str(exc):
+                return False, str(exc)
+            try:
+                self.account.login(self.local_email, password)
+            except account_mod.AccountError as login_exc:
+                return False, (f"На сервере эта почта уже занята, "
+                               f"а пароль не подходит: {login_exc}")
+        self.account_token = self.account.token
+        self.account_username = self.account.username
+        self._last_sync = 0.0
+        self.local_synced = True
+        self.sync_to_server(silent=True)
+        self.refresh_mail()
+        return True, "Аккаунт перенесён на сервер, прогресс синхронизируется"
 
     def apply_remote(self, remote):
         """Подставляет сохранение с сервера, сохраняя настройки этого устройства."""
@@ -721,6 +830,10 @@ class GameState:
             "unlocked_ops": sorted(self.unlocked_ops),
             "test_level": self.test_level,
             "tests_passed": self.tests_passed,
+            "local_email": self.local_email,
+            "local_since": self.local_since,
+            "local_synced": self.local_synced,
+            "local_letters": self.local_letters,
             "max_difficulty_solved": self.max_difficulty_solved,
             "settings": self.settings,
             "stats": self.stats,
@@ -756,6 +869,14 @@ class GameState:
 
         state.test_level = max(1, int(data.get("test_level", 1)))
         state.tests_passed = int(data.get("tests_passed", 0))
+        # Местный аккаунт: без сервера регистрация всё равно работает
+        state.local_email = str(data.get("local_email", "") or "")
+        state.local_since = float(data.get("local_since", 0.0) or 0.0)
+        state.local_synced = bool(data.get("local_synced", False))
+        state.local_letters = [item for item in
+                               (data.get("local_letters") or [])
+                               if isinstance(item, dict) and item.get("id")]
+        state.purge_expired_letters()
         for key, value in (data.get("stats") or {}).items():
             if key in state.stats:
                 state.stats[key] = value

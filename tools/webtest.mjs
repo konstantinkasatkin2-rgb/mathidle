@@ -169,6 +169,24 @@ async function phase2() {
     d.getElementById("modalBody").textContent.trim());
   click2("#modalClose");
 
+  // --- у каждой кнопки «Начать» свой обработчик ---
+  // Их три, по одной на вид контрольной. Раньше обработчик вешался только
+  // на первую, и итоговая с экзаменом просто не нажимались.
+  click2('[data-tab="test"]');
+  const startButtons = Array.from(d.querySelectorAll("[data-start]"));
+  check("кнопок «Начать» столько, сколько открытых видов",
+    startButtons.length === 2, String(startButtons.length));
+  startButtons.forEach((btn) => {
+    const kind = btn.getAttribute("data-start");
+    check(`обработчик есть у «${kind}»`, typeof btn.onclick === "function");
+  });
+  // Экзамена ещё нет: он открывается только после двух сданных контрольных
+  check("экзамен не показан до двух сданных",
+    !d.querySelector('[data-start="exam"]'));
+  check("проверяются все виды контрольной из баланса",
+    w.MATHIDLE_BALANCE.test_types.length === 3,
+    String(w.MATHIDLE_BALANCE.test_types.length));
+
   // --- магазин контрольных улучшений ---
   click2('[data-tab="shop"]');
   check("вкладка магазина доступна", !!d.querySelector('[data-grade="unlock_sub"]'));
@@ -312,6 +330,9 @@ async function testLayouts() {
   check("вкладка «Почта» есть", !!d.querySelector('[data-tab="mail"]'));
   check("до регистрации почта закрыта",
     d.querySelector('[data-tab="mail"]').disabled);
+  check("почта в сохранении помечена как местная",
+    Array.isArray(JSON.parse(w.localStorage.getItem("mathidle.save") || "{}")
+      .localLetters));
   // Сам ящик проверяет браузерный тест аккаунтов: здесь только структура.
   check("почта — шестая вкладка",
     Array.from(d.querySelectorAll(".tabs button")).map((b) => b.dataset.tab)
