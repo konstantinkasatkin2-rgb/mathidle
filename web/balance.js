@@ -2,7 +2,7 @@
  * Пересобрать: python tools/export_balance.py
  */
 var MATHIDLE_BALANCE = {
- "version": "1.2.12",
+ "version": "1.2.13",
  "title": "Math Idle",
  "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
  "base_upgrades": [
@@ -441,7 +441,7 @@ var MATHIDLE_BALANCE = {
  "game": {
   "title": "Math Idle",
   "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
-  "version": "1.2.12",
+  "version": "1.2.13",
   "window": [
    1280,
    760

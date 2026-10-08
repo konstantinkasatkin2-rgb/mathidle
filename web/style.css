@@ -366,6 +366,20 @@ html, body {
 }
 .small-btn:hover { border-color: var(--accent); }
 
+/* тихая ссылка: второстепенное действие, чтобы не спорить с главной кнопкой */
+.link-btn {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-bottom: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.link-btn:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
 /* предупреждение: сервер недоступен, неверный адрес и т.п. */
 .warn {
   margin: 6px 0;

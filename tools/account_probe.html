@@ -46,6 +46,21 @@ function frameReady(url) {
 }
 
 /* Ждём либо сообщение об ошибке, либо кнопку «Выйти». */
+function waitText(d, re, ms) {
+  return new Promise(function (res) {
+    var t0 = Date.now();
+    (function tick() {
+      // Именно документ игры: пробник живёт в верхней странице, а игра —
+      // во вложенном фрейме, и верхний document.getElementById ничего
+      // не найдёт. Проверка молча ждала бы в пустоте.
+      var panel = d.getElementById("panel");
+      if (panel && re.test(panel.innerHTML)) return res(true);
+      if (Date.now() - t0 > ms) return res(false);
+      setTimeout(tick, 120);
+    })();
+  });
+}
+
 function waitFor(d, ms) {
   return new Promise(function (res) {
     var t0 = Date.now();
@@ -87,24 +102,39 @@ function pause(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     // ждём, пока игра заметит мост (она пробует каждые полсекунды)
     await pause(1200);
     d.querySelector('[data-tab="settings"]').click();
-    await pause(400);
-    // Жмём «Искать сервер ещё раз» — ровно так поступит игрок, если
-    // включил Tailscale, уже запустив игру.
+    var panelText = function () { return d.querySelector("#panel").innerHTML; };
+    // Ждём именно находки, а не фиксированную паузу: время ответа сети
+    // гуляет, и пауза превращалась бы в лотерею — то проверка падает
+    // через раз, то проходит.
+    await waitText(d, /Сервер найден сам/, 6000);
+    // Главная проверка сценария: сервер найден, и игроку не пришлось ничего
+    // вводить — поля с адресом на экране нет вовсе.
+    log("сервер найден без ввода адреса: " +
+        /Сервер найден сам/.test(panelText()),
+        /Сервер найден сам/.test(panelText()));
+    var hidden = !d.getElementById("serverUrl");
+    log("поле адреса скрыто, пока сервер найден: " + hidden, hidden);
+    log("есть тихая кнопка «ввести вручную»: " +
+        !!d.querySelector("[data-show-server]"),
+        !!d.querySelector("[data-show-server]"));
+    // Ручной ввод и повторный поиск — запасной путь, открываем его сами.
+    var show = d.querySelector("[data-show-server]");
+    if (show) {
+      show.click();
+      await pause(300);
+    }
     var search = d.querySelector("[data-find-servers]");
-    log("есть кнопка «Искать сервер ещё раз»: " + !!search, !!search);
+    log("после «ввести вручную» есть поиск заново: " + !!search, !!search);
     if (search) {
       search.click();
       await pause(900);
     }
-    // Адрес в поле не главное: игрок мог задать его вручную, и игра не
-    // затирает находку. Главное — что сервер найден (это видно в панели
-    // строкой «Найдено в сети») и что регистрация по нему проходит, что
-    // и проверяет следующий шаг.
     var picked = d.getElementById("serverUrl");
-    log("адрес известен игре (найден или задан): " +
-        !!(picked && picked.value) ||
-        /айдено в сети/.test(d.querySelector("#panel").innerHTML));
-    var shown = /айдено в сети/.test(d.querySelector("#panel").innerHTML);
+    var known = !!(picked && picked.value) ||
+      /Сервер найден сам/.test(panelText());
+    log("адрес известен игре (найден или задан): " + known, known);
+    var shown = /Сервер найден сам/.test(panelText()) ||
+        !!(picked && picked.value);
     log("адрес показан в настройках: " + shown, shown);
 
     d.getElementById("loginName").value = "mob-" + USER + "@mail.ru";

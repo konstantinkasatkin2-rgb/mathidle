@@ -302,6 +302,7 @@ async function testLayouts() {
 
   const inst = await layoutAt(360, 640);
   const d = inst.dl;
+  const w = inst.wl;
   check("открываемся на игре", d.body.classList.contains("view-play"));
   check("вкладка «Игра» есть", !!d.querySelector('[data-tab="play"]'));
   check("меню не выбрано", !d.body.classList.contains("view-menu"));
@@ -344,6 +345,33 @@ async function testLayouts() {
     /На одну почту — один/.test(panelHtml));
   check("есть подсказка про Tailscale",
     /100\.x\.y\.z/.test(panelHtml));
+
+  // Главная цель: игроку не нужно вводить адрес, если сервер нашёлся.
+  // А если не нашёлся — поле обязано быть, иначе зарегистрироваться
+  // нечем: это запасной путь, а не украшение.
+  check("сервер не найден — поле адреса на месте, запасной путь",
+    !!d.getElementById("serverUrl") &&
+      /Сервер не найден|Укажите адрес|Ищу компьютер/.test(panelHtml),
+    panelHtml.slice(0, 80));
+  w.MathIdleNative = {
+    findServers: function () {},
+  };
+  // Игра подхватывает мост приложения сама, повторяя попытки каждые
+  // полсекунды, — даём ей эти полсекунды.
+  await new Promise((r) => setTimeout(r, 900));
+  w.MathIdleNativeServers(["http://100.101.102.103:8766"]);
+  d.querySelector('[data-tab="settings"]').click();
+  const afterFind = d.getElementById("panel").innerHTML;
+  check("при найденном сервере адрес показан текстом",
+    /Сервер найден сам/.test(afterFind) &&
+      /100\.101\.102\.103/.test(afterFind));
+  check("поле адреса при найденном сервере не показывается",
+    !d.getElementById("serverUrl"), "поле всё ещё на экране");
+  check("есть тихая кнопка «ввести вручную»",
+    !!d.querySelector("[data-show-server]"));
+  d.querySelector("[data-show-server]").click();
+  check("кнопка открывает поле для ручного ввода",
+    !!d.getElementById("serverUrl"));
 }
 
 setTimeout(async () => {
