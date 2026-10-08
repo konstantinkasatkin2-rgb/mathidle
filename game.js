@@ -376,7 +376,11 @@
             state.serverUrl = self.discovered[0];
             save();
           }
-          if (activeTab() === "settings") renderAll();
+          // Через ui., а не напрямую: activeTab и renderAll живут внутри модуля
+          // интерфейса, и извне их не видно. Без ui. здесь вылетало
+          // «activeTab is not defined» — как только телефон сообщил, что
+          // сервер найден, и настройки не обновлялись.
+          if (ui.activeTab() === "settings") ui.renderAll();
         };
         try {
           window.MathIdleNative.findServers();
@@ -389,6 +393,11 @@
       // случай пробуем ещё несколько раз.
       if (attempt < 6) {
         setTimeout(function () { self.discover(attempt + 1); }, 500);
+      } else {
+        // Попытки кончились. Поиска больше не будет, и «ищу» на экране
+        // повисло бы навсегда — а вместе с ним и поле адреса: в браузере
+        // моста нет вовсе, там искать нечем, поле нужно сразу.
+        searching = false;
       }
       return false;
     },
@@ -1049,6 +1058,7 @@
     var eggDismissed = false;
     var loginName = "", loginPass = "", accountError = "", syncPassDraft = "";
 var searching = false;      // идёт ли поиск сервера в сети
+var showServerField = false; // показано ли поле адреса вручную
 
     var KIND_COLORS = {
       buy: "var(--accent)", unlock: "var(--gold)", pass: "var(--green)",
@@ -1574,34 +1584,67 @@ var searching = false;      // идёт ли поиск сервера в сет
       return out;
     }
 
-    /** Адрес сервера аккаунтов — его надо задать, если игра открыта не с компьютера. */
+    /**
+     * Адрес сервера аккаунтов. Вводить его почти никогда не нужно: телефон
+     * сам находит сервер в сети, компьютер — на себе. Поэтому вместо поля
+     * стоит строка «сервер найден сам: http://…», а само поле прячется под
+     * «ввести вручную» и появляется само, если сервер не нашёлся: иначе
+     * тот, кому повезло не везти, остался бы в тупике.
+     */
     function serverUrlField() {
       var secure = /^https:/i.test(window.location.protocol);
-      var found = account.discovered.length
-        ? '<div class="small accent" style="margin-top:6px">Найдено в сети: ' +
-          escapeHtml(account.discovered.join(", ")) + "</div>"
-        : "";
-      var hint = account.discovered.length
-        ? "Найден сам, можно просто нажать «Регистрация»"
-        : (searching
-            ? "Ищу сервер в сети…"
-            : (window.MathIdleNative
-                ? "Сервер не найден. Запусти его на компьютере и нажми «Искать ещё раз»"
-                : "Укажи адрес компьютера, где запущен сервер"));
-      var again = window.MathIdleNative
-        ? '<button class="small-btn" data-find-servers="1">Искать сервер ещё раз</button>'
-        : "";
-      return '<label class="small field-label">Адрес сервера аккаунтов' +
-        (secure ? " (нужен https://)" : "") + "</label>" +
-        '<input id="serverUrl" class="full-input" type="text" ' +
-        'placeholder="http://192.168.1.10:8766" value="' +
-        escapeHtml(state.serverUrl) + '" spellcheck="false">' +
-        '<div class="small" style="margin-top:4px">' + hint + "</div>" +
-        found + again +
-        '<div class="small" style="margin-top:6px">Сервер доступен из любой точки, ' +
-        "где установлен Tailscale на обоих устройствах: адрес будет вида " +
-        "http://100.x.y.z:8766</div>" +
-        '<button class="small-btn" data-save-url="1">Сохранить адрес</button>';
+      var found = account.discovered.length > 0;
+      var out = "";
+      if (state.serverUrl) {
+        // Адрес, введённый руками, главнее найденного: игрок выбрал его сам.
+        var auto = account.discovered.indexOf(state.serverUrl) >= 0;
+        var other = found && !auto
+          ? "<br>В сети также найден: " + escapeHtml(account.discovered[0])
+          : "";
+        out += '<div class="small" style="margin:8px 0 2px"' +
+          (auto ? '><span class="accent">Сервер найден сам: ' : ">Сервер: ") +
+          escapeHtml(state.serverUrl) + other + "</div>";
+      } else if (found) {
+        out += '<div class="small" style="margin:8px 0 2px"><span class="accent">' +
+          "Сервер найден сам: " + escapeHtml(account.discovered[0]) + "</span></div>";
+      } else if (searching) {
+        out += '<div class="small" style="margin:8px 0 2px">' +
+          "Ищу компьютер с сервером…</div>";
+      } else if (window.MathIdleNative) {
+        out += '<div class="small" style="margin:8px 0 2px">Сервер не найден. ' +
+          "Запусти на компьютере MathIdleServer.exe, потом нажми «Искать ещё раз»" +
+          "</div>";
+      } else {
+        // В браузере поиск по сети невозможен: страницу загрузили из
+        // интернета, и она не может ни спросить, ни объявить в сети.
+        out += '<div class="small" style="margin:8px 0 2px">' +
+          "Браузер не умеет искать сервер в сети. Укажите адрес " +
+          "компьютера, на котором он запущен</div>";
+      }
+
+      // Пока идёт поиск, поле не показываем: через секунду всё равно выяснится,
+// нашёлся сервер или нет, и мигание только сбивает с толку. Появляется
+// поле только когда искать уже нечего и толку нет.
+      var manual = showServerField || (!found && !searching);
+      if (manual) {
+        out += '<label class="small field-label">Адрес сервера аккаунтов' +
+          (secure ? " (нужен https://)" : "") + "</label>" +
+          '<input id="serverUrl" class="full-input" type="text" ' +
+          'placeholder="http://100.101.102.103:8766" value="' +
+          escapeHtml(state.serverUrl) + '" spellcheck="false">' +
+          '<div class="small" style="margin-top:4px">Обычно это адрес вида ' +
+          "<code>100.x.y.z:8766</code>, который Tailscale даёт компьютеру, " +
+          "либо адрес в домашней сети, например 192.168.1.10:8766</div>" +
+          '<button class="small-btn" data-save-url="1">Проверить и сохранить</button>';
+        if (window.MathIdleNative) {
+          out += '<button class="small-btn" data-find-servers="1">' +
+            "Искать сервер ещё раз</button>";
+        }
+      } else {
+        out += '<button class="link-btn" data-show-server="1">' +
+          "Адрес ввести вручную</button>";
+      }
+      return out;
     }
 
     function escapeHtml(text) {
@@ -1742,6 +1785,9 @@ var searching = false;      // идёт ли поиск сервера в сет
         save();
         renderAll();
       };
+      bind("[data-show-server]", function (node) {
+        return function () { showServerField = true; renderAll(); };
+      });
       bind("[data-claim]", function (node) {
         return function () { doClaim(node.getAttribute("data-claim")); };
       });
@@ -2206,7 +2252,11 @@ var searching = false;      // идёт ли поиск сервера в сет
         setTimeout(function () { syncViewport(); renderPlay(); }, 220);
       });
       renderEgg();
-      account.discover();          // в приложении сервер ищется сам
+      // Ищем сервер сразу, без всякого «начать». В браузере искать нечем
+      // (страница из интернета не видит ни широковещания, ни локальной
+      // сети), поэтому там не притворяемся: сразу поле для ввода.
+      searching = !!window.MathIdleNative;
+      account.discover();
     }
 
     function renderAll() {
@@ -2226,7 +2276,8 @@ var searching = false;      // идёт ли поиск сервера в сет
 
     return {
       init: init, log: log, floater: floater, renderAll: renderAll, renderLive: renderLive,
-      showModal: showModal, flash: flash, syncToServer: syncToServer
+      showModal: showModal, flash: flash, syncToServer: syncToServer,
+      activeTab: activeTab
     };
   })();
 
