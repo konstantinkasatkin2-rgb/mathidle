@@ -473,16 +473,22 @@
       });
     },
 
-    register: function (username, password) {
+    register: function (email, password, compensated) {
       var self = this;
-      return this.tryUrls("/api/register", "POST", { username: username, password: password })
-        .then(function (data) { self.username = data.username || username; self.token = data.token; });
+      return this.tryUrls("/api/register", "POST", {
+        email: email, password: password,
+        // компенсация уже получена на устройстве — второго письма не надо
+        compensated: !!compensated,
+      })
+        .then(function (data) { self.username = data.username || email; self.token = data.token; });
     },
 
-    login: function (username, password) {
+    login: function (email, password, compensated) {
       var self = this;
-      return this.tryUrls("/api/login", "POST", { username: username, password: password })
-        .then(function (data) { self.username = data.username || username; self.token = data.token; });
+      return this.tryUrls("/api/login", "POST", {
+        email: email, password: password, compensated: !!compensated,
+      })
+        .then(function (data) { self.username = data.username || email; self.token = data.token; });
     },
 
     logout: function () { this.username = null; this.token = null; },
@@ -1401,6 +1407,15 @@
         "Письма живут " + Math.round(B.mail.expires_in_seconds / 86400) +
         " суток с момента отправки. Срок считает сервер.</div>";
 
+      // Честное предупреждение: местный аккаунт исчезнет вместе с
+      // приложением, и войти будет некуда. Об этом лучше сказать прямо.
+      if (state.localEmail && !state.localSynced && !account.signedIn()) {
+        out += '<div class="warn">Прогресс лежит только на этом устройстве. ' +
+          "Удалите приложение или его данные — и он пропадёт навсегда: " +
+          "восстановить будет нечем. Чтобы подстраховаться, перенесите " +
+          "аккаунт на сервер — кнопка в настройках.</div>";
+      }
+
       if (!letters.length) {
         return out + '<div class="info-card"><h3>Пока пусто</h3>' +
           '<div class="line"><span>Новых писем нет</span><span></span></div></div>';
@@ -1784,6 +1799,22 @@
       if (!validEmail(address)) {
         return { ok: false, message: "Почта не похожа на адрес. Пример: vasya@mail.ru" };
       }
+      if (state.localEmail) {
+        // Повторное нажатие «Регистрация» не должно плодить письма:
+        // компенсация одна на одну почту.
+        if (state.localEmail === address) {
+          return {
+            ok: true,
+            message: "Аккаунт уже создан на этом устройстве. " +
+              "Письмо с компенсацией в почте",
+          };
+        }
+        return {
+          ok: false,
+          message: "На этом устройстве уже есть аккаунт " + state.localEmail +
+            ". Одна почта — один аккаунт, удалить его можно только вместе с игрой",
+        };
+      }
       state.localEmail = address;
       state.localSince = Date.now() / 1000;
       var now = Math.floor(Date.now() / 1000);
@@ -1822,11 +1853,13 @@
         return Promise.resolve({ ok: false, message: "Пароль минимум 6 символов" });
       }
       var address = state.localEmail;
-      return account.register(address, password).catch(function (err) {
+      // Компенсация уже получена на устройстве — серверу второе письмо
+      // слать не надо, иначе на одну почту выйдут две награды.
+      return account.register(address, password, true).catch(function (err) {
         if (!/уже есть аккаунт/i.test(err.message || "")) {
           throw err;
         }
-        return account.login(address, password);
+        return account.login(address, password, true);
       }).then(function () {
         state.localSynced = true;
         loginPass = "";
@@ -1893,7 +1926,11 @@
         // Регистрация не должна упираться в включённый компьютер: если
         // сервера нет, аккаунт создаётся на устройстве и письмо с
         // компенсацией всё равно приходит.
-        if (kind === "register" && err && err.unreachable) {
+        // unreachable — сеть не отвечает, mixed — браузер запретил запрос
+        // к http-серверу с https-страницы; и то и другое означает, что
+        // сервера рядом нет. А вот ответ самого сервера («почта занята»,
+        // «пароль короче») — это настоящая ошибка, её не маскируем.
+        if (kind === "register" && err && (err.unreachable || err.mixed)) {
           var local = registerLocal(name);
           accountError = local.ok ? "" : local.message;
           save();

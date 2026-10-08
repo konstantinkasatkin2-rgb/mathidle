@@ -2,7 +2,7 @@
  * Пересобрать: python tools/export_balance.py
  */
 var MATHIDLE_BALANCE = {
- "version": "1.2.8",
+ "version": "1.2.9",
  "title": "Math Idle",
  "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
  "base_upgrades": [
@@ -434,13 +434,14 @@ var MATHIDLE_BALANCE = {
   "one_account_per_email": true,
   "reward_money": 100.0,
   "expires_in_seconds": 259200,
+  "kind": "compensation",
   "welcome_subject": "Компенсация за утраченный прогресс",
   "welcome_body": "Мы знаем, что в версии 1.2.4 пропал ваш прогресс.\nПричина была в нас: игра сменила адрес страницы, а сохранения привязаны к адресу.\nС 1.2.6 сохранение переносится автоматически, а если не перенеслось — заберите компенсацию.\n\nПисьмо сгорает ровно через трое суток."
  },
  "game": {
   "title": "Math Idle",
   "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "window": [
    1280,
    760

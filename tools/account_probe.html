@@ -187,14 +187,37 @@ function pause(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
           before !== after);
       d.querySelector('[data-tab="mail"]').click();
       await pause(400);
-      log("кнопки больше нет: " +
-          !/Забрать награду/.test(d.querySelector("#panel").innerHTML));
+      var gone = !/Забрать награду/.test(d.querySelector("#panel").innerHTML);
+      log("кнопки больше нет: " + gone, gone);
     }
     d.querySelector('[data-tab="settings"]').click();
     await pause(400);
     var setHtml = d.querySelector("#panel").innerHTML;
     log("в настройках виден перенос на сервер: " +
         /Перенести на сервер/.test(setHtml), /Перенести на сервер/.test(setHtml));
+    // Правило «одна почта — одно письмо»: нажатий сколько угодно,
+    // а письмо и награда всё равно одни.
+    var EMAIL2 = "farmer-" + Date.now().toString().slice(-6) + "@mail.ru";
+    d.querySelector('[data-tab="settings"]').click();
+    await pause(300);
+    for (var i = 0; i < 5; i++) {
+      d.getElementById("serverUrl").value = URL_;
+      d.getElementById("loginName").value = EMAIL2;
+      d.getElementById("loginPass").value = "parol123";
+      d.querySelector("[data-register]").click();
+      await pause(700);
+    }
+    d.querySelector('[data-tab="mail"]').click();
+    await pause(500);
+    var seen = (d.querySelector("#panel").innerHTML.match(
+        /Компенсация за утраченный прогресс/g) || []).length;
+    log("пять нажатий «Регистрация» — писем одно: " + (seen === 1), seen === 1);
+    var btn2 = d.querySelector("[data-claim]");
+    if (btn2) btn2.click();
+    await pause(900);
+    var money = d.getElementById("money").textContent.trim();
+    log("награда начислена один раз: " + money,
+        /^100([.,]0+)?$/.test(money));
     out.className = failures ? "bad" : "ok";
     document.title = failures ? "ACCOUNT-FAIL" : "ACCOUNT-OK";
     return;

@@ -57,7 +57,7 @@ except ImportError:
     # mathidle рядом с ним нет. Нужны всего два значения, поэтому берём их
     # отсюда; чтобы версия не расходилась с игрой, она подставляется при сборке.
     class _Config:
-        GAME = {"version": "1.2.8"}
+        GAME = {"version": "1.2.9"}
         ACCOUNT = {"session_token_days": 30}
 
     config = _Config()
@@ -85,13 +85,27 @@ def mail_expires_at(now=None):
 
 
 def send_welcome_mail(conn, user_id, now=None):
-    """Кладёт письмо с компенсацией в ящик игрока."""
+    """Кладёт письмо с компенсацией — не более одного на аккаунт.
+
+    Возвращает id письма или None, если компенсация уже была. Повторная
+    попытка не создаёт ни письма, ни второй награды.
+    """
+    kind = config.MAIL["kind"]
+    existing = conn.execute(
+        "SELECT id FROM mail WHERE user_id = ? AND kind = ?",
+        (user_id, kind)).fetchone()
+    if existing:
+        return None
     created = now if now is not None else time.time()
-    cur = conn.execute(
-        "INSERT INTO mail (user_id, subject, body, reward, created_at, expires_at)"
-        " VALUES (?, ?, ?, ?, ?, ?)",
-        (user_id, config.MAIL["welcome_subject"], config.MAIL["welcome_body"],
-         config.MAIL["reward_money"], created, mail_expires_at(created)))
+    try:
+        cur = conn.execute(
+            "INSERT INTO mail (user_id, kind, subject, body, reward,"
+            " created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, kind, config.MAIL["welcome_subject"],
+             config.MAIL["welcome_body"], config.MAIL["reward_money"],
+             created, mail_expires_at(created)))
+    except sqlite3.IntegrityError:
+        return None       # гонка: письмо уже создано
     return cur.lastrowid
 
 _lock = threading.Lock()
@@ -145,6 +159,7 @@ CREATE TABLE IF NOT EXISTS tokens (
 CREATE TABLE IF NOT EXISTS mail (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL DEFAULT '',
     subject     TEXT NOT NULL,
     body        TEXT NOT NULL,
     reward      REAL NOT NULL DEFAULT 0,
@@ -154,6 +169,10 @@ CREATE TABLE IF NOT EXISTS mail (
 );
 CREATE INDEX IF NOT EXISTS idx_tokens_user ON tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_mail_user ON mail(user_id);
+-- Одно письмо данного вида на аккаунт. Повторная компенсация за ту же
+-- почту невозможна даже при сбое в коде: база просто не даст вставить
+-- вторую строку.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_once ON mail(user_id, kind);
 -- Уникальность почты живёт в индексе, а не в самой колонке: SQLite не
 -- умеет добавлять колонку с UNIQUE через ALTER TABLE, а старые базы
 -- приходится доводить на месте. COLLATE NOCASE — иначе база считала бы
@@ -172,6 +191,22 @@ def migrate(conn):
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
     if "email" not in columns:
         conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+    tables = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "mail" in tables:
+        # Таблица уже была — у прежних писем вида не было. Считаем их
+        # компенсацией, иначе ограничение «одно письмо на аккаунт» их бы
+        # пропустило, и добавляем колонку с видом.
+        mail_columns = {row["name"] for row in conn.execute("PRAGMA table_info(mail)")}
+        if "kind" not in mail_columns:
+            conn.execute("ALTER TABLE mail ADD COLUMN kind TEXT NOT NULL DEFAULT ''")
+            conn.execute("UPDATE mail SET kind = ? WHERE kind = ''",
+                         (config.MAIL["kind"],))
+            # две компенсации одному аккаунту оставляем только одну
+            conn.execute(
+                "DELETE FROM mail WHERE id NOT IN ("
+                "  SELECT MIN(id) FROM mail GROUP BY user_id, kind)"
+            )
     conn.executescript(SCHEMA)
     conn.commit()
 
@@ -495,7 +530,11 @@ class Handler(BaseHTTPRequestHandler):
                 "INSERT INTO tokens (token, user_id, created_at, expires_at)"
                 " VALUES (?, ?, ?, ?)", (token, user_id, now, token_expiry()))
             # Письмо с компенсацией уходит сразу после регистрации.
-            mail_id = send_welcome_mail(db(), user_id, now)
+            mail_id = None
+            if not data.get("compensated"):
+                # Если компенсация уже получена на этом устройстве (аккаунт
+                # создавался без сервера), второго письма не будет.
+                mail_id = send_welcome_mail(db(), user_id, now)
             commit()
         self.send_json(201, {"username": username, "email": email,
                              "token": token, "mail_id": mail_id})
@@ -533,8 +572,9 @@ class Handler(BaseHTTPRequestHandler):
             # Аккаунтам, заведённым до появления почты, письмо тоже
             # положим — компенсация им полагается так же.
             have_mail = db().execute(
-                "SELECT 1 FROM mail WHERE user_id = ? LIMIT 1", (row["id"],)).fetchone()
-            if not have_mail:
+                "SELECT 1 FROM mail WHERE user_id = ? AND kind = ?",
+                (row["id"], config.MAIL["kind"])).fetchone()
+            if not have_mail and not data.get("compensated"):
                 send_welcome_mail(db(), row["id"], now)
             commit()
         self.send_json(200, {"username": row["username"],

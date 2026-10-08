@@ -177,18 +177,24 @@ class AccountClient:
         except AccountError:
             return False
 
-    def register(self, email, password):
-        """Регистрация по почте: на одну почту — один аккаунт."""
+    def register(self, email, password, compensated=False):
+        """Регистрация по почте: на одну почту — один аккаунт.
+
+        compensated=True — компенсация уже получена на устройстве, серверу
+        письмо повторно слать не надо.
+        """
         data = self._try_urls("/api/register", method="POST",
-                              payload={"email": email, "password": password})
+                              payload={"email": email, "password": password,
+                                       "compensated": bool(compensated)})
         self.username = data.get("username", "")
         self.email = data.get("email", email)
         self.token = data.get("token")
         return self
 
-    def login(self, email, password):
+    def login(self, email, password, compensated=False):
         data = self._try_urls("/api/login", method="POST",
-                              payload={"email": email, "password": password})
+                              payload={"email": email, "password": password,
+                                       "compensated": bool(compensated)})
         self.username = data.get("username", "")
         self.email = data.get("email", "")
         self.token = data.get("token")

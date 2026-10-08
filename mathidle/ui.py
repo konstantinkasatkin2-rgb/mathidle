@@ -1204,6 +1204,13 @@ class GameUI:
             small.render("На одну почту — один аккаунт", True, MUTED),
             (rect.x + 4, y))
         y += 24
+        # Честное предупреждение: удалишь приложение — местный прогресс пропадёт
+        if st.local_email and not st.local_synced:
+            canvas.blit(
+                small.render("Прогресс только на этом устройстве: удалишь "
+                             "приложение — пропадёт навсегда", True, RED),
+                (rect.x + 4, y))
+            y += 22
 
         # Аккаунт на устройстве: его можно отдать серверу, когда тот появится
         if st.local_email and not st.local_synced and not st.account.signed_in:

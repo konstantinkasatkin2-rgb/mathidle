@@ -271,6 +271,9 @@ MAIL = {
     "one_account_per_email": True,        # одна почта — один аккаунт
     "reward_money": 100.0,                # компенсация в деньгах
     "expires_in_seconds": 3 * 86400,      # ровно 3 суток
+    # Письмо с компенсацией — ровно одно на одну почту, насовсем. Иначе
+    # можно было бы нажимать «Регистрация» снова и снова и собрать денег.
+    "kind": "compensation",
     "welcome_subject": "Компенсация за утраченный прогресс",
     "welcome_body": (
         "Мы знаем, что в версии 1.2.4 пропал ваш прогресс.\n"
@@ -529,7 +532,7 @@ OFFLINE = {
 GAME = {
     "title": "Math Idle",
     "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
-    "version": "1.2.8",
+    "version": "1.2.9",
     "window": [1280, 760],
     "autosave_seconds": 5.0,
     "font": "assets/fonts/Roboto-Regular.ttf",

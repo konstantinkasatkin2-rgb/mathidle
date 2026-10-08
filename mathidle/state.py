@@ -704,6 +704,15 @@ class GameState:
             return False, "Почта не похожа на адрес. Пример: vasya@mail.ru"
         if self.account.signed_in:
             return False, "Аккаунт уже есть"
+        if self.local_email:
+            # Повторное нажатие «Регистрация» не должно плодить письма:
+            # компенсация одна на одну почту.
+            if self.local_email == address:
+                return True, ("Аккаунт уже создан на этом устройстве. "
+                              "Письмо с компенсацией в почте")
+            return False, ("На этом устройстве уже есть аккаунт "
+                           f"{self.local_email}. Один аккаунт на почту, "
+                           "а удалить его можно только вместе с игрой")
         self.local_email = address
         self.local_since = time.time()
         letter = self.make_local_letter()
@@ -757,12 +766,14 @@ class GameState:
         if len(password) < 6:
             return False, "Пароль минимум 6 символов"
         try:
-            self.account.register(self.local_email, password)
+            self.account.register(self.local_email, password,
+                                  compensated=True)
         except account_mod.AccountError as exc:
             if "уже есть аккаунт" not in str(exc):
                 return False, str(exc)
             try:
-                self.account.login(self.local_email, password)
+                self.account.login(self.local_email, password,
+                                   compensated=True)
             except account_mod.AccountError as login_exc:
                 return False, (f"На сервере эта почта уже занята, "
                                f"а пароль не подходит: {login_exc}")

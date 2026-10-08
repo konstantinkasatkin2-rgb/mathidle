@@ -95,6 +95,12 @@ def raw(path):
         return fh.read()
 
 
+def acc_letters(port, token):
+    """Сколько писем видит игрок с этим токеном."""
+    _code, body = request(port, "/api/mail", token=token)
+    return len(body.get("letters", []))
+
+
 print("Регистрация и файл на диске")
 folder = tempfile.mkdtemp()
 db_path = os.path.join(folder, "accounts.db")
@@ -321,6 +327,28 @@ else:
     life = letter.get("expires_at", 0) - letter.get("created_at", 0)
     check("срок ровно трое суток", abs(life - 3 * 86400) < 0.001, life)
 
+    # Одна компенсация на одну почту — даже если код попытается дважды
+    check("повторное письмо на сервере не создаётся",
+          acc_letters(mail_port, token) == 1,
+          acc_letters(mail_port, token))
+    code, body = request(mail_port, "/api/register",
+                         {"email": "ivan@mail.ru", "password": "parol123"})
+    check("вторая регистрация той же почты отклонена", code == 409, (code, body))
+    # даже прямой вход обратно не должен вернуть компенсацию ещё раз
+    code, body = request(mail_port, "/api/login",
+                         {"email": "ivan@mail.ru", "password": "parol123"})
+    again = acc_letters(mail_port, body.get("token", ""))
+    check("и повторный вход тоже без второго письма", code == 200 and again == 1,
+          (code, again))
+
+    # флаг «компенсация уже получена» гасит письмо совсем
+    code, body = request(mail_port, "/api/register",
+                         {"email": "device@mail.ru", "password": "parol123",
+                          "compensated": True})
+    quiet = acc_letters(mail_port, body.get("token", ""))
+    check("регистрация с флагом компенсации письма не шлёт",
+          code == 201 and quiet == 0, (code, quiet))
+
     mail_id = letter.get("id")
     code, body = request(mail_port, "/api/mail/claim", {"id": mail_id}, token=token)
     check("награда выдана", code == 200 and body.get("reward") == 100.0, (code, body))
@@ -354,10 +382,31 @@ cur = acc._db.execute(
     " VALUES ('u', 'a@b.ru', ?, ?, ?)", (bytes(16), bytes(32), now))
 user_id = cur.lastrowid
 fresh_id = acc.send_welcome_mail(acc._db, user_id, now)
-old_id = acc.send_welcome_mail(acc._db, user_id, now - 10 * 86400)
+old_id = acc._db.execute(
+    "INSERT INTO mail (user_id, kind, subject, body, reward, created_at,"
+    " expires_at) VALUES (?, 'other', 'старое', '', 0, ?, ?)",
+    (user_id, now - 10 * 86400, now - 7 * 86400)).lastrowid
 check("письмо живёт трое суток",
       acc._db.execute("SELECT expires_at - created_at FROM mail WHERE id = ?",
                       (fresh_id,)).fetchone()[0] == 3 * 86400)
+check("повторная компенсация не создаётся",
+      acc.send_welcome_mail(acc._db, user_id, now) is None)
+
+
+def _dup_insert(account_server, user_id, stamp):
+    """Прямая попытка вставить вторую компенсацию — база должна отказать."""
+    import sqlite3 as _sq
+    try:
+        account_server._db.execute(
+            "INSERT INTO mail (user_id, kind, subject, body, reward,"
+            " created_at, expires_at) VALUES (?, 'compensation', 'ещё', '', 0, ?, ?)",
+            (user_id, stamp, stamp))
+        return False
+    except _sq.IntegrityError:
+        return True
+
+
+check("прямая вставка дубля отклонена", _dup_insert(acc, user_id, now))
 check("сгоревшее письмо помечается в прошлом",
       acc._db.execute("SELECT expires_at <= ? FROM mail WHERE id = ?",
                       (now, old_id)).fetchone()[0] == 1)
@@ -428,6 +477,55 @@ acc._master_key = None
 
 shutil.rmtree(folder, ignore_errors=True)
 shutil.rmtree(legacy_dir, ignore_errors=True)
+
+print("Переустановка: вернётся ли прогресс")
+# Вопрос игрока: зарегистрировался, удалил приложение, поставил заново —
+# смогу ли войти? Проверяем на живом сервере и настоящем клиенте.
+restore_dir = tempfile.mkdtemp()
+restore_db = os.path.join(restore_dir, "accounts.db")
+restore_port = free_port()
+sys.path.insert(0, ROOT)
+from mathidle import account as player_account  # noqa: E402
+
+proc, log = start(restore_port, restore_db)
+if proc.poll() is not None:
+    check("сервер для переустановки поднялся", False, log[-300:])
+else:
+    # первый заход: регистрация, игра, синхронизация
+    first = player_account.AccountClient(url="http://127.0.0.1:%d" % restore_port)
+    first.register("reinstall@mail.ru", "parol123")
+    payload = {"money": 4321.5, "run_earned": 4321.5, "test_level": 5,
+               "prestige_count": 2, "prestige_points": 3,
+               "max_difficulty_solved": 1.0,
+               "stats": {"solved": 777, "earned": 99999, "wrong": 3,
+                         "tests_passed": 9, "best_streak": 42,
+                         "prestige_points_total": 7, "passive_earned": 0,
+                         "idle_examples": 0, "ascensions": 0, "femboy": False}}
+    first.upload_save(payload)
+    check("прогресс ушёл на сервер", True)
+
+    # «удаляем приложение»: устройство забывает всё, токен тоже
+    again = player_account.AccountClient(url="http://127.0.0.1:%d" % restore_port)
+    again.login("reinstall@mail.ru", "parol123")
+    restored = again.download_save()
+    check("вход после удаления приложения удался", again.signed_in)
+    check("прогресс вернулся целиком",
+          bool(restored) and restored.get("money") == 4321.5
+          and restored.get("prestige_count") == 2
+          and restored.get("stats", {}).get("solved") == 777,
+          restored if not restored else {
+              "money": restored.get("money"),
+              "prestige_count": restored.get("prestige_count"),
+              "solved": restored.get("stats", {}).get("solved")})
+    letters = again.mail()[0]
+    check("после переустановки письмо ровно одно", len(letters) == 1, letters)
+    check("и оно ещё не получено", letters and letters[0]["claimed"] is False)
+
+    # а вот аккаунт без сервера живёт только на устройстве: тут хранить нечего
+    check("без сервера восстанавливать нечего",
+          not os.path.exists(os.path.join(restore_dir, "нет-такого.db")))
+stop(proc)
+shutil.rmtree(restore_dir, ignore_errors=True)
 
 print()
 if fails:

@@ -504,6 +504,23 @@ def test_local_account():
           not account_mod.valid_email("a@b") and
           account_mod.valid_email("vasya@mail.ru"))
 
+    # Одна компенсация на одну почту: сколько ни жми «Регистрация»
+    farm = state.GameState(rng=random.Random(4))
+    for _ in range(5):
+        farm.register_local("Farmer@Mail.RU ")
+    check("пять нажатий — писем всё равно одно",
+          len(farm.local_letters) == 1, len(farm.local_letters))
+    money = 0.0
+    for letter in list(farm.local_letters):
+        ok, _msg = farm.claim_mail(letter["id"])
+        money = farm.money
+    check("награда начислена один раз", money == 100.0, money)
+    ok, message = farm.register_local("Farmer@mail.ru")
+    check("повторная регистрация не плодит письма",
+          len(farm.local_letters) == 1, (len(farm.local_letters), message))
+    ok, message = farm.register_local("другой@mail.ru")
+    check("и вторая почта не заводится", not ok, message)
+
 
 def _ui_register_without_server():
     """Настольная кнопка «Регистрация» при выключенном сервере.
