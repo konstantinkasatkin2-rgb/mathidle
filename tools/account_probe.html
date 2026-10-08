@@ -298,9 +298,12 @@ function pause(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     fill(USER, "parol123");
     click("[data-login]");
     var login = await waitFor(d, 15000);
-    var clear = /сервер не отвечает/i.test(login) &&
-      !/failed to fetch/i.test(login);
-    log("вход без сервера — сообщение понятное: " + clear, clear);
+    // Про «сервер не отвечает» проверяем обратное: такой фразы на экране
+    // быть не должно — она пугает новичка, будто игра сломалась.
+    var scary = /сервер не отвечает|не удалось связаться/i.test(login);
+    log("страшного текста про сервер нет: " + !scary, scary ? login : "");
+    var clear = !scary && !/failed to fetch/i.test(login);
+    log("вход без сервера — сообщение спокойное: " + clear, clear);
     log("игрок не попал в аккаунт: " + !/ВЫХОД ВЫПОЛНЕН/.test(login),
       !/ВЫХОД ВЫПОЛНЕН/.test(login));
     out.className = failures ? "bad" : "ok";

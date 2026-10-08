@@ -442,15 +442,14 @@
         if (err && err.serverSaid) throw err;
         var message = err && err.message ? err.message : "сеть недоступна";
         if (/failed to fetch|networkerror|load failed/i.test(message)) {
-          var hint = self.isMixedContent(base)
-            ? B.account.https_required_hint
-            : "Проверьте, что сервер аккаунтов запущен (bash tools/serve_accounts.sh) " +
-              "и что адрес доступен с этого устройства.";
-          var wrapped = new Error("Сервер не отвечает. " + hint);
+          // Текст ошибки намеренно скудный: «сервер не отвечает» пугает
+          // новичка, будто игра сломалась. Настоящую картину игрок
+          // прочитает в панели, где написано спокойно и по делу.
+          var wrapped = new Error("сервер недоступен");
           wrapped.unreachable = true;
           throw wrapped;
         }
-        var net = new Error("Сервер не отвечает: " + message);
+        var net = new Error("сервер недоступен");
         net.unreachable = true;
         throw net;
       });
@@ -1565,7 +1564,14 @@ var showServerField = false; // показано ли поле адреса вр
           "а не на устройстве</div>" +
           serverUrlField();
         if (account.lastError) {
-          out += '<div class="warn" >' + escapeHtml(account.lastError) + "</div>";
+          // Не красная ошибка, а спокойная строка: сервер аккаунтов —
+          // необязательная часть игры. Красным пугать не о чем: игра и так
+          // работает, прогресс лежит на устройстве.
+          out += '<div class="notice">Сейчас не удаётся связаться с сервером ' +
+            "аккаунтов. Это не мешает играть: прогресс сохраняется на этом " +
+            "устройстве. Зарегистрироваться тоже можно — аккаунт заведётся " +
+            "здесь, а на сервер перенесётся, когда он будет доступен" +
+            "</div>";
         }
         if (accountError) {
           out += '<div class="warn">' + escapeHtml(accountError) + "</div>";
@@ -2093,14 +2099,16 @@ var showServerField = false; // показано ли поле адреса вр
           "такой запрос («Failed to fetch»). " + B.account.https_required_hint +
           " Или укажите https-адрес сервера в поле выше.";
       }
-      if (err && /имя|пароль|занят|минимум/i.test(err.message)) {
+      // Настоящие ответы сервера показываем как есть: «почта занята» или
+      // «пароль короче» игроку полезны, даже если прошло это слово мимо
+      // списка ниже.
+      if (err && (err.serverSaid || /имя|пароль|занят|минимум/i.test(err.message))) {
         return err.message;
       }
-      return (err && err.message ? err.message : "Не удалось связаться с сервером") +
-        ". Проверьте, что сервер запущен (bash tools/serve_accounts.sh), адрес верен " +
-        "и доступен с этого устройства" +
-        (secure ? ". Для телефона нужен IP компьютера в локальной сети, а не 127.0.0.1" : "") +
-        ".";
+      // А вот «сервер недоступен» — не беда: игра работает и без него.
+      return "Сервер аккаунтов сейчас недоступен — это не мешает игре. " +
+        "Можно зарегистрироваться прямо здесь: аккаунт заведётся на этом " +
+        "устройстве, а на сервер перенесётся, когда тот станет доступен.";
     }
 
     function syncToServer(silent) {
