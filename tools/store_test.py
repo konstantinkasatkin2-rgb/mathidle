@@ -547,6 +547,118 @@ stop(proc)
 shutil.rmtree(restore_dir, ignore_errors=True)
 
 print()
+print("Второй игрок на том же устройстве")
+# Вопрос игрока: как зарегистрироваться другому игроку? Ответ — выйти и
+# зарегистрировать другую почту. Проверяем главное: деньги первого игрока
+# не должны достаться второму и не должны записаться в его аккаунт.
+two_dir = tempfile.mkdtemp()
+two_db = os.path.join(two_dir, "accounts.db")
+two_port = free_port()
+sys.path.insert(0, ROOT)
+from mathidle import state as player_state  # noqa: E402
+
+proc, log = start(two_port, two_db)
+if proc.poll() is not None:
+    check("сервер для второго игрока поднялся", False, log[-300:])
+else:
+    url = "http://127.0.0.1:%d" % two_port
+    st = player_state.GameState()
+    st.account = player_account.AccountClient(url=url)
+
+    ok, text = st.register("pervyy@mail.ru", "parol123")
+    check("первый игрок зарегистрировался", ok, text)
+    st.money = 5000.0
+    st.stats["solved"] = 120
+    st.sync_to_server(silent=True)
+
+    # выход и вход того же игрока: прогресс остаётся его
+    st.sign_out()
+    ok, text = st.sign_in("pervyy@mail.ru", "parol123")
+    check("первый игрок вернул свой прогресс",
+          ok and st.money == 5000.0, "%s / %s" % (text, st.money))
+
+    # выход и регистрация другого человека на том же устройстве
+    st.sign_out()
+    ok, text = st.register("vtoroy@mail.ru", "parol123")
+    check("второй игрок зарегистрировался", ok, text)
+    check("второй игрок начинает с нуля, а не с чужими деньгами",
+          st.money == 0.0, st.money)
+    check("и чужая статистика не досталась",
+          st.stats.get("solved") == 0, st.stats.get("solved"))
+    check("настройки устройства остались свои", bool(st.settings))
+
+    # прогресс первого игрока на сервере цел и вернётся ему
+    other = player_account.AccountClient(url=url)
+    other.login("pervyy@mail.ru", "parol123")
+    saved = other.download_save()
+    check("прогресс первого игрока не пострадал",
+          bool(saved) and saved.get("money") == 5000.0,
+          saved.get("money") if saved else None)
+
+    # у каждого игрока своё письмо с компенсацией
+    check("у первого игрока своё письмо", len(other.mail()[0]) == 1)
+    again2 = player_account.AccountClient(url=url)
+    again2.login("vtoroy@mail.ru", "parol123")
+    check("у второго игрока своё письмо", len(again2.mail()[0]) == 1)
+
+    # перенос аккаунта без сервера тоже делает прогресс «своим»
+    local = player_state.GameState()
+    local.money = 777.0
+    ok, text = local.register_local("tretiy@mail.ru")
+    check("аккаунт без сервера создан", ok, text)
+    check("прогресс до переноса остался своим", local.owner_email == "tretiy@mail.ru")
+stop(proc)
+shutil.rmtree(two_dir, ignore_errors=True)
+
+print()
+print("Второе устройство")
+# Вопрос игрока: как зарегистрироваться с другого телефона? Проверяем, что
+# аккаунт виден с двух устройств сразу, прогресс переезжает, а повторная
+# регистрация той же почты честно отвечает «войди», а не заводит дубль.
+dev_dir = tempfile.mkdtemp()
+dev_db = os.path.join(dev_dir, "accounts.db")
+dev_port = free_port()
+proc, log = start(dev_port, dev_db)
+if proc.poll() is not None:
+    check("сервер для второго устройства поднялся", False, log[-300:])
+else:
+    url = "http://127.0.0.1:%d" % dev_port
+    # первое устройство: регистрация, игра, синхронизация
+    phone1 = player_account.AccountClient(url=url)
+    phone1.register("telefon1@mail.ru", "parol123")
+    phone1.upload_save({"money": 300.0, "stats": {"solved": 20}})
+    check("первое устройство зарегистрировано", phone1.signed_in)
+
+    # регистрация той же почты со второго устройства
+    phone2 = player_account.AccountClient(url=url)
+    try:
+        phone2.register("telefon1@mail.ru", "parol123")
+        check("повторная регистрация отклонена", False, "аккаунт создан повторно")
+    except player_account.AccountError as exc:
+        check("повторная регистрация отклонена", "уже есть аккаунт" in str(exc), exc)
+
+    # правильный путь — «Войти», и прогресс приезжает
+    phone2.login("telefon1@mail.ru", "parol123")
+    moved = phone2.download_save()
+    check("второе устройство вошло", phone2.signed_in)
+    check("прогресс переехал на второе устройство",
+          bool(moved) and moved.get("money") == 300.0,
+          moved.get("money") if moved else None)
+
+    # оба устройства работают одновременно: вход не выбивает первое
+    phone1.upload_save({"money": 450.0, "stats": {"solved": 25}})
+    still = phone1.download_save()
+    check("первое устройство не выбито вторым",
+          bool(still) and still.get("money") == 450.0,
+          still.get("money") if still else None)
+    check("второе устройство тоже работает", phone2.signed_in)
+
+    # у аккаунта одно письмо с компенсацией, сколько устройств ни подключай
+    check("письмо с компенсацией одно на почту", len(phone2.mail()[0]) == 1)
+stop(proc)
+shutil.rmtree(dev_dir, ignore_errors=True)
+
+print()
 if fails:
     print("ПРОВАЛЕНО проверок: %d" % len(fails))
     for name in fails:

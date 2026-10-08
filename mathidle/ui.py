@@ -1191,7 +1191,18 @@ class GameUI:
             btn.action = self.do_sign_out
             btn.draw(canvas, self.fonts)
             self._pending.append(btn)
-            y += 56
+            y += 50
+            # Подсказка про второго игрока: вопрос возникает сам собой,
+            # когда за одним телефоном играют двое.
+            canvas.blit(
+                small.render("Другой игрок: «Выйти», затем его почта — профиль "
+                             "с нуля,", True, MUTED),
+                (rect.x + 4, y))
+            y += 20
+            canvas.blit(
+                small.render("этот прогресс останется здесь", True, MUTED),
+                (rect.x + 4, y))
+            y += 26
             self.draw_mail(canvas, small, body, rect, y)
             canvas.set_clip(None)
             return

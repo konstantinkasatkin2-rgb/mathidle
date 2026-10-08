@@ -532,6 +532,10 @@
     localSince: 0,
     localSynced: false,
     localLetters: [],
+    // Чей прогресс лежит на устройстве. Прогресс принадлежит игроку, а не
+    // устройству: зарегистрировалась другая почта — чужие деньги ей
+    // отдавать нельзя, начинаем с нуля.
+    ownerEmail: "",
     current: null,
     shownAt: 0,
     test: null,
@@ -954,6 +958,7 @@
       local_since: state.localSince,
       local_synced: state.localSynced,
       local_letters: state.localLetters,
+      owner_email: state.ownerEmail,
       stats: state.stats,
       play_time: state.playTime,
       account_username: account.username,
@@ -1000,6 +1005,7 @@
     state.localSince = Number(data.local_since) || 0;
     state.localSynced = !!data.local_synced;
     state.localLetters = Array.isArray(data.local_letters) ? data.local_letters : [];
+    state.ownerEmail = String(data.owner_email || "");
     state.playTime = Number(data.play_time) || 0;
     if (data.account_token) {
       account.username = data.account_username;
@@ -1253,7 +1259,16 @@ var searching = false;      // идёт ли поиск сервера в сет
       var rate = passiveRate();
       var maxRate = 0;
       B.base_upgrades.forEach(function (u) { maxRate += u.max_rate; });
-      var out = '<div class="small" style="margin-bottom:4px">Сейчас: ' + fmtRate(rate) +
+      var out = "";
+      // Новичку регистрация нужна сразу, а прятать её в настройках — значит
+      // потерять и игрока, и его прогресс. Кнопка ведёт прямо к полю почты.
+      if (!account.signedIn() && !state.localEmail) {
+        out += '<div class="notice">Аккаунт ещё не заведён. Он нужен, чтобы ' +
+          "прогресс не пропал при переустановке и чтобы приходили письма " +
+          'с компенсацией. <button class="small-btn" data-jump-login="1">' +
+          "Зарегистрироваться</button></div>";
+      }
+      out += '<div class="small" style="margin-bottom:4px">Сейчас: ' + fmtRate(rate) +
         " примера/с · " + fmtMoney(rate * passiveReward(topOperation())) + "/с · всего " +
         fmtRate(maxRate) + " максимум</div>";
       out += setting("passive_counter")
@@ -1530,7 +1545,11 @@ var searching = false;      // идёт ли поиск сервера в сет
           " · прогресс синхронизируется</div>" +
           '<div class="small" style="margin:4px 0 8px">Сервер: ' + account.status() + "</div>" +
           serverUrlField() +
-          '<button class="big-btn danger" data-signout="1">Выйти</button>';
+          '<button class="big-btn danger" data-signout="1">Выйти</button>' +
+          '<div class="small" style="margin-top:8px">Хочешь зарегистрировать ' +
+          "другого игрока на этом устройстве? Нажми «Выйти» и введи его почту. " +
+          "Его профиль начнётся с нуля, а этот прогресс останется за тобой — " +
+          "вернуться можно тем же паролем.</div>";
       } else {
         out += '<div class="small">Войди, чтобы прогресс хранился на сервере, ' +
           "а не на устройстве</div>" +
@@ -1642,7 +1661,12 @@ var searching = false;      // идёт ли поиск сервера в сет
     /** Прокручивает панель к форме входа. */
     function jumpToLogin() {
       var field = document.getElementById("loginName");
-      if (!field) return;
+      if (!field) {
+        // поля нет — открыта другая вкладка, идём в настройки
+        setTab("settings");
+        field = document.getElementById("loginName");
+        if (!field) return;
+      }
       var panelRect = el.panel.getBoundingClientRect();
       var fieldRect = field.getBoundingClientRect();
       el.panel.scrollTop += (fieldRect.top - panelRect.top) - 12;
@@ -1833,6 +1857,7 @@ var searching = false;      // идёт ли поиск сервера в сет
         };
       }
       state.localEmail = address;
+      state.ownerEmail = address;
       state.localSince = Date.now() / 1000;
       var now = Math.floor(Date.now() / 1000);
       state.localLetters.push({
@@ -1879,6 +1904,9 @@ var searching = false;      // идёт ли поиск сервера в сет
         return account.login(address, password, true);
       }).then(function () {
         state.localSynced = true;
+        // Прогресс на устройстве теперь заведён на сервере: он принадлежит
+        // этой почте, и следующий игрок его не унаследует.
+        state.ownerEmail = address;
         loginPass = "";
         save();
         return refreshMail();
@@ -1909,6 +1937,37 @@ var searching = false;      // идёт ли поиск сервера в сет
       }
     }
 
+    /**
+     * Запоминает, кому принадлежит прогресс на устройстве.
+     *
+     * Возвращает true, если это другой игрок: его профиль должен начаться
+     * с нуля, иначе новый аккаунт получил бы деньги предыдущего.
+     */
+    function claimOwner(email) {
+      var address = String(email || "").trim().toLowerCase();
+      var previous = state.ownerEmail;
+      state.ownerEmail = address;
+      return !!previous && previous !== address;
+    }
+
+    /** Чистый профиль: настройки и адрес сервера остаются свои. */
+    function startFresh() {
+      var settings = state.settings;
+      var url = state.serverUrl;
+      var owner = state.ownerEmail;
+      applyDict({});
+      state.settings = settings;
+      state.serverUrl = url;
+      state.ownerEmail = owner;
+      state.stats = { solved: 0, wrong: 0, earned: 0, passive_earned: 0,
+        prestige_points_total: 0, tests_passed: 0, idle_examples: 0,
+        best_streak: 0, ascensions: 0, femboy: false };
+      state.current = null;
+      state.test = null;
+      state.combo = 0;
+      state.easterEgg = false;
+    }
+
     function doAuth(kind) {
       var nameInput = document.getElementById("loginName");
       var passInput = document.getElementById("loginPass");
@@ -1931,7 +1990,17 @@ var searching = false;      // идёт ли поиск сервера в сет
         save();
         return account.downloadSave();
       }).then(function (data) {
+        // Сверить, чей это прогресс, нужно до подстановки сохранения:
+        // сохранение с сервера и есть источник истины.
+        var switched = claimOwner(name);
         if (data && data.save) applyDict(data.save);
+        else if (switched) {
+          // Аккаунт только что создан, а на устройстве лежит прогресс
+          // другого игрока. Отдавать его чужим деньгам нельзя.
+          startFresh();
+          save();
+          account.uploadSave(toDict()).catch(function () { /* не критично */ });
+        }
         ui.log(kind === "login" ? "Вход выполнен, прогресс загружен"
           : "Аккаунт создан. Письмо с компенсацией уже в почте", "unlock");
         nextProblem();

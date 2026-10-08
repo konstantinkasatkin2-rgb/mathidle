@@ -79,6 +79,10 @@ class GameState:
         self.local_since = 0.0
         self.local_synced = False
         self.local_letters = []  # письма, созданные на устройстве
+        # Чей прогресс лежит на устройстве. Прогресс принадлежит игроку,
+        # а не устройству: зарегистрировалась другая почта — чужие деньги
+        # ей отдавать нельзя, начинаем с нуля.
+        self.owner_email = ""
         self._last_sync = 0.0
         self._last_save = 0.0
         self._clock = 0.0
@@ -608,6 +612,30 @@ class GameState:
     # ------------------------------------------------------------------
     # Аккаунт
     # ------------------------------------------------------------------
+    def claim_owner(self, email):
+        """Запоминает, кому принадлежит прогресс на устройстве.
+
+        Возвращает True, если это другой игрок: тогда его профиль должен
+        начаться с нуля, иначе новый аккаунт получит деньги предыдущего.
+        """
+        address = str(email or "").strip().lower()
+        previous = self.owner_email
+        self.owner_email = address
+        return bool(previous) and previous != address
+
+    def start_fresh(self):
+        """Чистый профиль: настройки и адрес сервера остаются свои."""
+        keep_settings = dict(self.settings)
+        keep_owner = self.owner_email
+        fresh = GameState.from_dict({})
+        fresh.settings = keep_settings
+        fresh.owner_email = keep_owner
+        fresh.account = self.account
+        fresh.account_token = self.account_token
+        fresh.account_username = self.account_username
+        self.__dict__.update(fresh.__dict__)
+        self.next_problem()
+
     def sign_in(self, email, password):
         """Вход в аккаунт и загрузка сохранения с сервера."""
         try:
@@ -617,6 +645,7 @@ class GameState:
         self.account_token = self.account.token
         self.account_username = self.account.username
         self._last_sync = 0.0
+        switched = self.claim_owner(email)
         try:
             remote = self.account.download_save()
         except account_mod.AccountError as exc:
@@ -624,6 +653,11 @@ class GameState:
         if remote:
             self.apply_remote(remote)
             return True, f"Вход выполнен, прогресс загружен с сервера"
+        # Профиля на сервере ещё нет: игрок переносит свой прогресс с
+        # устройства. Но если это другой человек — начинаем с нуля.
+        if switched:
+            self.start_fresh()
+            return True, "Вход выполнен, начат новый профиль"
         self.sync_to_server(silent=True)
         return True, "Вход выполнен, создан новый профиль"
 
@@ -635,6 +669,20 @@ class GameState:
         self.account_token = self.account.token
         self.account_username = self.account.username
         self._last_sync = 0.0
+        switched = self.claim_owner(email)
+        try:
+            remote = self.account.download_save()
+        except account_mod.AccountError:
+            remote = None
+        if remote:
+            self.apply_remote(remote)
+            self.refresh_mail()
+            return True, "Аккаунт создан, прогресс загружен с сервера"
+        # Учётной записи только что создана. Свой прогресс игрок уносит с
+        # собой — иначе перенос на сервер стирал бы всё наигранное, —
+        # но прогресс предыдущего игрока этому аккаунту не достаётся.
+        if switched:
+            self.start_fresh()
         self.sync_to_server(silent=True)
         self.refresh_mail()
         return True, f"Аккаунт создан. Письмо с компенсацией уже в почте"
@@ -715,6 +763,7 @@ class GameState:
                            "а удалить его можно только вместе с игрой")
         self.local_email = address
         self.local_since = time.time()
+        self.owner_email = address
         letter = self.make_local_letter()
         if letter:
             self.local_letters.append(letter)
@@ -781,6 +830,9 @@ class GameState:
         self.account_username = self.account.username
         self._last_sync = 0.0
         self.local_synced = True
+        # Прогресс на устройстве теперь заведён на сервере: он принадлежит
+        # этой почте, и следующий игрок его не унаследует.
+        self.owner_email = self.local_email
         self.sync_to_server(silent=True)
         self.refresh_mail()
         return True, "Аккаунт перенесён на сервер, прогресс синхронизируется"
@@ -845,6 +897,7 @@ class GameState:
             "local_since": self.local_since,
             "local_synced": self.local_synced,
             "local_letters": self.local_letters,
+            "owner_email": self.owner_email,
             "max_difficulty_solved": self.max_difficulty_solved,
             "settings": self.settings,
             "stats": self.stats,
@@ -887,6 +940,7 @@ class GameState:
         state.local_letters = [item for item in
                                (data.get("local_letters") or [])
                                if isinstance(item, dict) and item.get("id")]
+        state.owner_email = str(data.get("owner_email", "") or "")
         state.purge_expired_letters()
         for key, value in (data.get("stats") or {}).items():
             if key in state.stats:

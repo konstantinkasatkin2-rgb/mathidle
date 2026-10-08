@@ -20,8 +20,8 @@ android {
         minSdk 21
         targetSdk 34
         // держим в согласии с версией игры из mathidle/config.py
-        versionCode 129
-        versionName "1.2.10"
+        versionCode 130
+        versionName "1.2.11"
     }
 
     signingConfigs {
