@@ -517,6 +517,8 @@
              tests_passed: 0, idle_examples: 0, best_streak: 0, ascensions: 0, femboy: false },
     settings: {},
     serverUrl: "",          // адрес сервера аккаунтов (настраивается в «Настройках»)
+    mail: [],               // письма в ящике аккаунта
+    mailUnread: 0,
     current: null,
     shownAt: 0,
     test: null,
@@ -934,6 +936,7 @@
       max_difficulty_solved: state.maxDifficulty,
       settings: state.settings,
       server_url: state.serverUrl,
+      mail: state.mail,
       stats: state.stats,
       play_time: state.playTime,
       account_username: account.username,
@@ -975,6 +978,7 @@
       if (data.settings && data.settings[key] !== undefined) state.settings[key] = data.settings[key];
     });
     state.serverUrl = String(data.server_url || "");
+    state.mail = Array.isArray(data.mail) ? data.mail : [];
     state.playTime = Number(data.play_time) || 0;
     if (data.account_token) {
       account.username = data.account_username;
@@ -1160,6 +1164,9 @@
     // ------------------------------------------------------------- вкладки
     function tabLocked(id) {
       if (id === "play") return false;
+      // Почта появляется только после регистрации: без аккаунта её некуда
+      // получать, и пустая вкладка только пугает.
+      if (id === "mail") return !account.signedIn();
       if (id === "shop" && !shopUnlocked()) return true;
       if (id === "prestige" && state.prestigeCount === 0 && !prestigeUnlocked()) return true;
       return false;
@@ -1210,6 +1217,7 @@
       if (tab === "upgrades") html = panelUpgrades();
       else if (tab === "test") html = panelTests();
       else if (tab === "prestige") html = panelPrestige();
+      else if (tab === "mail") html = panelMail();
       else if (tab === "settings") html = panelSettings();
       else html = panelGrades();
       el.panel.innerHTML = html;
@@ -1365,6 +1373,57 @@
       return out;
     }
 
+    /** Почта аккаунта: письма и кнопка получения награды. */
+    function panelMail() {
+      if (!account.signedIn()) {
+        return '<div class="info-card"><h3>Почта</h3><div class="line">' +
+          "<span>Почта появляется после регистрации</span>" +
+          '<span></span></div></div>';
+      }
+      var letters = state.mail || [];
+      var out = '<div class="small" style="margin-bottom:8px">' +
+        "Письма живут " + Math.round(B.mail.expires_in_seconds / 86400) +
+        " суток с момента отправки. Срок считает сервер.</div>";
+
+      if (!letters.length) {
+        return out + '<div class="info-card"><h3>Пока пусто</h3>' +
+          '<div class="line"><span>Новых писем нет</span><span></span></div></div>';
+      }
+
+      for (var i = 0; i < letters.length; i++) {
+        var letter = letters[i];
+        var left = letter.expires_at - Math.floor(Date.now() / 1000);
+        var body = escapeHtml(letter.body).replace(/\n/g, "<br>");
+        var leftText = left > 0
+          ? "сгорит через " + fmtLeft(left)
+          : "сгорело";
+        out += '<div class="info-card"' + (letter.claimed ? "" : ' style="border-color:var(--gold)"') + ">" +
+          "<h3>" + escapeHtml(letter.subject) + "</h3>" +
+          '<div class="small" style="margin:6px 0">' + body + "</div>" +
+          '<div class="line"><span>Награда</span><span class="gold">' +
+          fmtMoney(letter.reward) + "</span></div>" +
+          '<div class="line"><span>' + leftText + "</span><span></span></div>";
+        if (letter.claimed) {
+          out += '<div class="small accent" style="margin-top:8px">Награда получена</div>';
+        } else if (left > 0) {
+          out += '<button class="big-btn" data-claim="' + letter.id +
+            '" style="background:var(--gold);color:#2a1d00">Забрать награду</button>';
+        } else {
+          out += '<div class="small" style="margin-top:8px">Письмо сгорело</div>';
+        }
+        out += "</div>";
+      }
+      return out;
+    }
+
+    function fmtLeft(seconds) {
+      if (seconds < 3600) return Math.max(1, Math.round(seconds / 60)) + " мин";
+      if (seconds < 86400) return Math.round(seconds / 3600) + " ч";
+      var days = Math.floor(seconds / 86400);
+      var hours = Math.round((seconds - days * 86400) / 3600);
+      return days + " дн " + hours + " ч";
+    }
+
     function panelGrades() {
       if (!shopUnlocked()) {
         return '<div class="info-card"><h3>Магазин закрыт</h3><div class="rules">' +
@@ -1420,10 +1479,13 @@
           out += '<div class="warn">' + escapeHtml(accountError) + "</div>";
         }
         out += '<div class="row-fields">' +
-          '<input id="loginName" type="text" placeholder="имя игрока" value="' +
-          escapeHtml(loginName) + '" maxlength="24" autocomplete="username">' +
+          '<input id="loginName" type="email" placeholder="почта: vasya@mail.ru" value="' +
+          escapeHtml(loginName) + '" maxlength="120" autocomplete="email">' +
           '<input id="loginPass" type="password" placeholder="пароль (мин. 6)" ' +
           'maxlength="64" autocomplete="current-password"></div>' +
+          '<div class="small" style="margin:-2px 0 8px">На одну почту — один ' +
+          "аккаунт. Письма настоящие: они приходят в игровую почту, на " +
+          "твой настоящий адрес ничего не отправляется.</div>" +
           '<button class="big-btn" data-login="1">Войти</button>' +
           '<button class="big-btn" data-register="1" style="background:var(--blue)">Регистрация</button>';
       }
@@ -1521,6 +1583,49 @@
         save();
         renderAll();
       };
+      bind("[data-claim]", function (node) {
+        return function () { doClaim(node.getAttribute("data-claim")); };
+      });
+    }
+
+    /** Забирает награду за письмо: деньги приходят от сервера. */
+    function doClaim(mailId) {
+      function api(path, method, payload) {
+        return account.tryUrls(path, method, payload, account.token);
+      }
+      api("/api/mail/claim", "POST", { id: Number(mailId) })
+        .then(function (data) {
+          var reward = Number(data.reward) || 0;
+          if (reward > 0) {
+            state.money += reward;
+            state.runEarned += reward;
+            state.stats.earned += reward;
+            ui.log("Письмо вскрыто: +" + fmtMoney(reward), "unlock");
+          }
+          return refreshMail();
+        })
+        .then(function () {
+          save();
+          renderAll();
+        })
+        .catch(function (err) {
+          accountError = err && err.message ? err.message : "не удалось забрать";
+          renderAll();
+        });
+    }
+
+    /** Забирает список писем с сервера. */
+    function refreshMail() {
+      if (!account.signedIn()) return Promise.resolve();
+      return account.tryUrls("/api/mail", "GET", null, account.token)
+        .then(function (data) {
+          state.mail = data.letters || [];
+          state.mailUnread = data.unread || 0;
+          syncTabs();
+        })
+        .catch(function () {
+          /* письма просто не обновились — это не повод ругать игрока */
+        });
     }
 
     function bind(selector, factory) {
@@ -1554,9 +1659,12 @@
         return account.downloadSave();
       }).then(function (data) {
         if (data && data.save) applyDict(data.save);
-        ui.log(kind === "login" ? "Вход выполнен, прогресс загружен" : "Аккаунт создан", "unlock");
+        ui.log(kind === "login" ? "Вход выполнен, прогресс загружен"
+          : "Аккаунт создан. Письмо с компенсацией уже в почте", "unlock");
         nextProblem();
         accountError = "";
+        return refreshMail();
+      }).then(function () {
         renderAll();
       }).catch(function (err) {
         accountError = explainAuthError(err, targets, kind);
