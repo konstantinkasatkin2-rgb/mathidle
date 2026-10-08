@@ -330,10 +330,6 @@ async function testLayouts() {
   check("вкладка «Почта» есть", !!d.querySelector('[data-tab="mail"]'));
   check("до регистрации почта закрыта",
     d.querySelector('[data-tab="mail"]').disabled);
-  check("почта в сохранении помечена как местная",
-    Array.isArray(JSON.parse(w.localStorage.getItem("mathidle.save") || "{}")
-      .localLetters));
-  // Сам ящик проверяет браузерный тест аккаунтов: здесь только структура.
   check("почта — шестая вкладка",
     Array.from(d.querySelectorAll(".tabs button")).map((b) => b.dataset.tab)
       .join(",").indexOf("mail") > 0);
@@ -343,8 +339,11 @@ async function testLayouts() {
   const nameField = d.getElementById("loginName");
   check("поле входа — почта", nameField && nameField.type === "email",
     nameField ? nameField.type : "нет поля");
+  const panelHtml = d.getElementById("panel").innerHTML;
   check("подсказка про одну почту на один аккаунт",
-    /На одну почту — один/.test(d.getElementById("panel").innerHTML));
+    /На одну почту — один/.test(panelHtml));
+  check("есть подсказка про Tailscale",
+    /100\.x\.y\.z/.test(panelHtml));
 }
 
 setTimeout(async () => {

@@ -1247,6 +1247,14 @@ class GameUI:
             btn.draw(canvas, self.fonts)
             self._pending.append(btn)
             y += 50
+            canvas.blit(
+                small.render("Сервер доступен из любого места, где включён Tailscale:",
+                             True, MUTED), (rect.x + 4, y))
+            y += 20
+            canvas.blit(
+                small.render("адрес будет вида http://100.x.y.z:8766", True, MUTED),
+                (rect.x + 4, y))
+            y += 26
 
         field_w = (rect.w - 10) // 2
         name_rect = pygame.Rect(rect.x, y, field_w, 40)

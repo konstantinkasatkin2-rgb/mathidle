@@ -376,16 +376,17 @@ public class MainActivity extends Activity {
      */
     private List<String> byProbing() {
         List<String> urls = new ArrayList<>();
-        String prefix = subnetPrefix();
-        if (prefix == null) {
-            return urls;
-        }
-        // prefix уже кончается точкой: «192.168.1.» — просто дописываем
-        // номер узла. Ничего разбирать не надо: префикс всегда с точкой.
-        // Нашли несколько — хватит, дальше идти незачем.
-        for (int host = 1; host <= 254 && urls.size() < 3; host++) {
-            if (responds(prefix + host)) {
-                urls.add("http://" + prefix + host + ":" + DISCOVERY_PORT);
+        for (String prefix : subnetPrefixes()) {
+            // prefix уже кончается точкой: «192.168.1.» — просто дописываем
+            // номер узла. Ничего разбирать не надо: префикс всегда с точкой.
+            // Нашли несколько — хватит, дальше идти незачем.
+            for (int host = 1; host <= 254 && urls.size() < 3; host++) {
+                if (responds(prefix + host)) {
+                    urls.add("http://" + prefix + host + ":" + DISCOVERY_PORT);
+                }
+            }
+            if (urls.size() >= 3) {
+                break;
             }
         }
         return urls;
@@ -419,15 +420,64 @@ public class MainActivity extends Activity {
     private List<String> broadcastAddresses() {
         List<String> list = new ArrayList<>();
         list.add("255.255.255.255");
-        String prefix = subnetPrefix();
+        String prefix = wifiPrefix();
         if (prefix != null) {
             list.add(prefix + "255");
         }
         return list;
     }
 
-    /** «192.168.1.» — префикс подсети телефона по данным Wi-Fi. */
-    private String subnetPrefix() {
+    /**
+     * Префиксы подсетей, в которых стоит искать сервер: «192.168.1.»,
+     * «100.101.102.» и так далее.
+     *
+     * Именно все интерфейсы, а не только Wi-Fi: когда включён Tailscale,
+     * у телефона появляется отдельный адрес вида 100.x.y.z, и компьютер
+     * с игрой виден именно там. Про проверку только домашней сети сервер
+     * аккаунтов из другого города не нашёлся бы никогда.
+     */
+    private List<String> subnetPrefixes() {
+        List<String> prefixes = new ArrayList<>();
+        try {
+            // getNetworkInterfaces() отдаёт Enumeration, а не список:
+            // обходить нужно циклом, for-each здесь не подходит.
+            java.util.Enumeration<java.net.NetworkInterface> nics =
+                    java.net.NetworkInterface.getNetworkInterfaces();
+            while (nics != null && nics.hasMoreElements()) {
+                java.net.NetworkInterface nic = nics.nextElement();
+                if (nic == null || !nic.isUp() || nic.isLoopback()) {
+                    continue;
+                }
+                java.util.Enumeration<java.net.InetAddress> addrs = nic.getInetAddresses();
+                while (addrs != null && addrs.hasMoreElements()) {
+                    byte[] raw = addrs.nextElement().getAddress();
+                    if (raw == null || raw.length != 4) {
+                        continue;
+                    }
+                    // loopback и link-local (169.254.x) не интересуют
+                    if (raw[0] == 127 || (raw[0] == 169 && raw[1] == 254)) {
+                        continue;
+                    }
+                    String prefix = String.format("%d.%d.%d.",
+                            raw[0] & 0xFF, raw[1] & 0xFF, raw[2] & 0xFF);
+                    if (!prefixes.contains(prefix)) {
+                        prefixes.add(prefix);
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // перечисление интерфейсов может быть запрещено — не беда,
+            // ниже останется запасной путь через Wi-Fi
+        }
+        String wifi = wifiPrefix();
+        if (wifi != null && !prefixes.contains(wifi)) {
+            prefixes.add(wifi);
+        }
+        return prefixes;
+    }
+
+    /** «192.168.1.» — префикс домашней сети по данным Wi-Fi. */
+    private String wifiPrefix() {
         try {
             WifiManager wifi = (WifiManager) getApplicationContext()
                     .getSystemService(Context.WIFI_SERVICE);

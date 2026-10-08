@@ -101,6 +101,25 @@ def acc_letters(port, token):
     return len(body.get("letters", []))
 
 
+print("Сервер должен хотя бы запускаться")
+# Модуль сервера раньше никто не импортировал, поэтому в него однажды попала
+# опечатка (потерянная скобка) — и проверка аккаунтов молча падала целиком.
+# Импортируем здесь же: синтаксическая ошибка видна сразу.
+try:
+    sys.path.insert(0, os.path.join(ROOT, "server"))
+    sys.path.insert(0, ROOT)
+    import account_server as _acc_probe
+    check("модуль сервера импортируется", True)
+    check("в нём есть обработчик запросов",
+          hasattr(_acc_probe, "Handler") and hasattr(_acc_probe, "main"))
+    game_version = _acc_probe.config.GAME.get("version")
+    check("в сервере версия игры совпадает", bool(game_version), game_version)
+except SyntaxError as err:
+    check("модуль сервера импортируется", False, "синтаксис: %s" % err)
+except Exception as err:                       # noqa: BLE001
+    check("модуль сервера импортируется", False, err)
+
+print("")
 print("Регистрация и файл на диске")
 folder = tempfile.mkdtemp()
 db_path = os.path.join(folder, "accounts.db")

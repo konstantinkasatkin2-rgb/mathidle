@@ -378,6 +378,18 @@ html, body {
   line-height: 1.45;
 }
 
+/* предупреждение, а не ошибка: важно, но ничего не сломалось */
+.notice {
+  margin: 6px 0;
+  padding: 8px 10px;
+  background: rgba(246, 196, 83, .09);
+  border: 1px solid var(--gold);
+  border-radius: 8px;
+  color: #f0d79a;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
 .big-btn {
   flex: none;
   width: 100%;
