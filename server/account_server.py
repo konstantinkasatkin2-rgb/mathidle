@@ -57,7 +57,7 @@ except ImportError:
     # mathidle рядом с ним нет. Нужны всего два значения, поэтому берём их
     # отсюда; чтобы версия не расходилась с игрой, она подставляется при сборке.
     class _Config:
-        GAME = {"version": "1.2.11"}
+        GAME = {"version": "1.2.12"}
         ACCOUNT = {"session_token_days": 30}
 
     config = _Config()
@@ -328,6 +328,57 @@ def lan_address():
         probe.close()
 
 
+def is_tailnet(ip):
+    """Адрес из 100.64.0.0/10 — это диапазон Tailscale.
+
+    Tailscale выдаёт устройствам адреса именно из него, и больше его
+    никто не использует: обычный домашний роутер адреса вида 100.x не
+    выдаёт.
+    """
+    try:
+        parts = [int(part) for part in str(ip).split(".")]
+    except (TypeError, ValueError):
+        return False
+    return len(parts) == 4 and parts[0] == 100 and 64 <= parts[1] <= 127
+
+
+def pick_host(tail=None, explicit=None, lan=False):
+    """На каком адресе слушать сервер.
+
+    По умолчанию — на адресе Tailscale: попасть к серверу смогут только
+    устройства вашей личной сети, а не все, кто знает адрес. Если туннель
+    не поднят, остаётся прежнее поведение (все интерфейсы), а игрок
+    предупреждается. Явный --host всегда главнее, --lan возвращает
+    открытый доступ.
+    """
+    if explicit:
+        return explicit
+    if lan:
+        return "0.0.0.0"
+    return tail or "0.0.0.0"
+
+
+def tailscale_address():
+    """Адрес Tailscale этого компьютера, если туннель поднят.
+
+    Узнаём его без разбора `ipconfig` и без лишних зависимостей: сокет
+    «присоединяется» к адресу MagicDNS внутри туннеля, и ядро отвечает,
+    каким адресом оно собирается выйти. Туннель не поднят — маршрута нет,
+    и connect() падает. Или маршрут есть, но он ушёл в домашнюю сеть —
+    тогда результат отсекается проверкой диапазона.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.settimeout(0.5)
+        probe.connect(("100.100.100.100", 53))
+        addr = probe.getsockname()[0]
+        return addr if is_tailnet(addr) else None
+    except OSError:
+        return None
+    finally:
+        probe.close()
+
+
 def _discovery_loop(sock, port, scheme, stop):
     """Отвечает на UDP-«пинги»: телефон спрашивает «есть ли тут сервер?»."""
     while not stop.is_set():
@@ -352,14 +403,22 @@ def _discovery_loop(sock, port, scheme, stop):
             pass
 
 
-def start_discovery(port, scheme):
-    """Запускает UDP-слушатель, чтобы игра нашла сервер сама."""
+def start_discovery(port, scheme, host=""):
+    """Запускает UDP-слушатель, чтобы игра нашла сервер сама.
+
+    Слушаем на том же адресе, что и сам сервер: иначе телефон из домашней
+    сети нашёл бы сервер по broadcast, а подключиться уже не смог — и
+    сообщил бы «сервер не отвечает» вместо «сервер не виден отсюда».
+    """
     stop = threading.Event()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        sock.bind(("", port))
+        if host and host not in ("0.0.0.0", "::"):
+            sock.bind((host, port))
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.bind(("", port))
     except OSError as err:
         sock.close()
         print("Поиск в сети не запустился: %s" % err)
@@ -735,7 +794,10 @@ def main():
     setup_console()
     parser = argparse.ArgumentParser(description="Сервер аккаунтов Math Idle")
     parser.add_argument("--port", type=int, default=8766)
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--host", default=None,
+                        help="адрес, на котором слушать (по умолчанию — Tailscale)")
+    parser.add_argument("--lan", action="store_true",
+                        help="слушать все сетевые интерфейсы, а не только Tailscale")
     parser.add_argument("--db", default=DB_PATH, help="файл зашифрованной базы")
     parser.add_argument("--passphrase", default=None,
                         help="пароль для базы вместо файла ключа")
@@ -750,10 +812,17 @@ def main():
     DB_PATH = args.db
     passphrase = args.passphrase or os.environ.get("MATHIDLE_DB_KEY") or None
 
-    scheme = "https" if args.https else "http"
-    ip = lan_address()
+    # Кому виден сервер. По умолчанию — только устройствам в личной сети
+    # Tailscale: они и так отобраны по аккаунту, а по домашней сети (гости,
+    # соседский Wi-Fi) сервер не отвечает вовсе. Если Tailscale не
+    # установлен, остаётся прежнее поведение, но с предупреждением.
+    tail = tailscale_address()
+    host = pick_host(tail, args.host, args.lan)
 
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    scheme = "https" if args.https else "http"
+    ip = host if host != "0.0.0.0" else lan_address()
+
+    server = ThreadingHTTPServer((host, args.port), Handler)
     if args.https:
         cert = args.cert or os.path.join(HERE, "cert.pem")
         key = args.key or os.path.join(HERE, "key.pem")
@@ -780,29 +849,37 @@ def main():
 
     print(f"Сервер аккаунтов Math Idle {config.GAME['version']}")
     print(f"  здесь:  {scheme}://127.0.0.1:{args.port}")
-    print(f"  в сети: {scheme}://{ip}:{args.port}")
+    print(f"  адрес:  {scheme}://{ip}:{args.port}")
     print(f"  база:   {DB_PATH} (зашифрована)")
     if passphrase:
         print("  ключ:   из пароля MATHIDLE_DB_KEY, на диске его нет")
     else:
         print(f"  ключ:   {DB_PATH}.key")
     print("")
+    if tail and host == tail and not args.lan:
+        print("Доступ — только по Tailscale: сервер слушает адрес из личной")
+        print(f"сети Tailscale и не отвечает в домашней сети ({lan_address()}).")
+        print("Зайти смогут лишь те устройства, что подключены к вашему")
+        print("аккаунту Tailscale. В списке Tailscale на этом компьютере видно,")
+        print("кого именно вы пустили.")
+    elif args.lan or not tail:
+        print("ВНИМАНИЕ: Tailscale не запущен, поэтому сервер виден всей")
+        print(f"домашней сети по адресу {lan_address()}. Зарегистрироваться")
+        print("сможет любой, кто подключён к этому Wi-Fi. Чтобы закрыть доступ:")
+        print("  1) установить Tailscale и войти на этом компьютере;")
+        print("  2) перезапустить сервер.")
+        print("Вернуть открытый доступ: запуск с --lan")
+    print("")
     print("В игре: Настройки → «Адрес сервера аккаунтов». На телефоне игра")
     print("найдёт сервер сама, если он запущен на этом компьютере.")
-    if args.host == "0.0.0.0":
-        print("")
-        print("Сервер виден всей сети, а не только этому компьютеру — так его")
-        print("находит телефон. Пароли хранятся хэшами, но прогресс и имена")
-        print("доступны любому в этой сети. Для одного компьютера запусти")
-        print("с --host 127.0.0.1.")
 
     stop = threading.Event()
     if not args.no_discovery:
-        sock, stop = start_discovery(args.port, scheme)
+        sock, stop = start_discovery(args.port, scheme, host)
         if sock is not None:
             print("  поиск в сети: включён (телефон найдёт сервер сам)")
 
-    if args.https and args.host in ("0.0.0.0", "127.0.0.1", "localhost"):
+    if args.https and host in ("0.0.0.0", "127.0.0.1", "localhost"):
         print("")
         print("ВНИМАНИЕ: сертификат самоподписанный, браузер спросит подтверждение.")
 

@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # Запуск сервера аккаунтов: прогресс хранится на сервере, а не на устройстве.
 #
-#   bash tools/serve_accounts.sh                    # http://127.0.0.1:8766
+#   bash tools/serve_accounts.sh                    # только Tailscale
 #   bash tools/serve_accounts.sh 8000               # другой порт
-#   bash tools/serve_accounts.sh 8766 0.0.0.0       # доступ из локальной сети
+#   bash tools/serve_accounts.sh --lan              # доступ из локальной сети
 #   bash tools/serve_accounts.sh --https            # по HTTPS, для сайта на HTTPS
 #   bash tools/serve_accounts.sh --https 8766       # другой порт для HTTPS
+#
+# КОМУ ВИДЕН СЕРВЕР: по умолчанию сервер слушает адрес Tailscale, и попасть
+# к нему могут только устройства вашей личной сети Tailscale. Если Tailscale
+# не установлен, сервер поднимется на всех интерфейсах и сам об этом скажет.
+# Открыть доступ всему Wi-Fi явно: --lan
 #
 # ПОЧЕМУ НУЖЕН HTTPS: если игра открыта по HTTPS (например, сайт на GitHub
 # Pages), браузер запрещает такой странице ходить на http-сервер — запрос
@@ -19,8 +24,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 HTTPS=""
+LAN=""
 PORT="8766"
-HOST="127.0.0.1"
+HOST=""
 CERT_CN=""
 
 if [ "${1:-}" = "--https" ]; then
@@ -28,9 +34,12 @@ if [ "${1:-}" = "--https" ]; then
   PORT="${2:-8766}"
   HOST="0.0.0.0"          # чтобы сервер был доступен и с телефона
   CERT_CN="${3:-}"
+elif [ "${1:-}" = "--lan" ]; then
+  LAN="--lan"
+  PORT="${2:-8766}"
 else
   PORT="${1:-8766}"
-  HOST="${2:-127.0.0.1}"
+  HOST="${2:-}"
 fi
 
 # Адрес компьютера в локальной сети — его указывают с телефона
@@ -90,4 +99,4 @@ if [ -n "$HTTPS" ]; then
 fi
 echo ""
 echo "Остановить: Ctrl+C"
-exec python server/account_server.py --port "$PORT" --host "$HOST" $HTTPS
+exec python server/account_server.py --port "$PORT" $HOST $LAN $HTTPS

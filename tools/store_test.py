@@ -114,6 +114,32 @@ try:
           hasattr(_acc_probe, "Handler") and hasattr(_acc_probe, "main"))
     game_version = _acc_probe.config.GAME.get("version")
     check("в сервере версия игры совпадает", bool(game_version), game_version)
+    # Кому виден сервер. Tailscale на этой машине может и не стоять —
+    # проверяем решение, а не наличие туннеля.
+    check("адрес 100.x распознан как Tailscale",
+          _acc_probe.is_tailnet("100.101.102.103")
+          and _acc_probe.is_tailnet("100.64.0.0")
+          and _acc_probe.is_tailnet("100.127.255.255"))
+    check("домашний адрес не принят за Tailscale",
+          not _acc_probe.is_tailnet("192.168.0.251")
+          and not _acc_probe.is_tailnet("100.128.0.1")
+          and not _acc_probe.is_tailnet("127.0.0.1")
+          and not _acc_probe.is_tailnet("не адрес"))
+    check("есть Tailscale — сервер слушает только его",
+          _acc_probe.pick_host("100.101.102.103") == "100.101.102.103",
+          _acc_probe.pick_host("100.101.102.103"))
+    check("нет Tailscale — сервер слушает всё и сам предупредит",
+          _acc_probe.pick_host(None) == "0.0.0.0",
+          _acc_probe.pick_host(None))
+    check("--lan возвращает открытый доступ",
+          _acc_probe.pick_host("100.101.102.103", None, True) == "0.0.0.0",
+          _acc_probe.pick_host("100.101.102.103", None, True))
+    check("явный адрес главнее всего",
+          _acc_probe.pick_host("100.101.102.103", "127.0.0.1") == "127.0.0.1",
+          _acc_probe.pick_host("100.101.102.103", "127.0.0.1"))
+    found = _acc_probe.tailscale_address()
+    check("адрес Tailscale либо есть и верный, либо его нет",
+          found is None or _acc_probe.is_tailnet(found), found)
 except SyntaxError as err:
     check("модуль сервера импортируется", False, "синтаксис: %s" % err)
 except Exception as err:                       # noqa: BLE001
