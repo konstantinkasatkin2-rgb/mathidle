@@ -24,11 +24,16 @@ if gh release view "$TAG" >/dev/null 2>&1; then
   gh release delete "$TAG" --yes >/dev/null
   echo "старый релиз $TAG удалён"
 fi
+# Заметки — файлом, а не аргументом: текста стало столько, что командная
+# строка Windows переполнилась («Argument list too long»).
+NOTES_FILE="$(mktemp)"
+cat tools/release-notes.md > "$NOTES_FILE"
 gh release create "$TAG" \
   dist/MathIdle-windows.zip dist/MathIdle.apk \
   --title "Math Idle $TAG" \
   $DRAFT \
-  --notes "$(cat tools/release-notes.md)"
+  --notes-file "$NOTES_FILE"
+rm -f "$NOTES_FILE"
 
 echo "===== 4. скачивание обратно ====="
 mkdir -p downloads
