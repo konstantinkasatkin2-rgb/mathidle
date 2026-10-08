@@ -305,8 +305,25 @@ async function testLayouts() {
   check("навигация закреплена в оболочке",
     d.querySelector(".tabs") === d.getElementById("tabs") &&
     d.getElementById("app").lastElementChild === d.getElementById("tabs"));
-  check("вкладок шесть", d.querySelectorAll(".tabs button").length === 6,
+  check("вкладок семь", d.querySelectorAll(".tabs button").length === 7,
     String(d.querySelectorAll(".tabs button").length));
+
+  // Почта появляется только после регистрации
+  check("вкладка «Почта» есть", !!d.querySelector('[data-tab="mail"]'));
+  check("до регистрации почта закрыта",
+    d.querySelector('[data-tab="mail"]').disabled);
+  // Сам ящик проверяет браузерный тест аккаунтов: здесь только структура.
+  check("почта — шестая вкладка",
+    Array.from(d.querySelectorAll(".tabs button")).map((b) => b.dataset.tab)
+      .join(",").indexOf("mail") > 0);
+
+  // Регистрация просит почту, а не имя
+  d.querySelector('[data-tab="settings"]').click();
+  const nameField = d.getElementById("loginName");
+  check("поле входа — почта", nameField && nameField.type === "email",
+    nameField ? nameField.type : "нет поля");
+  check("подсказка про одну почту на один аккаунт",
+    /На одну почту — один/.test(d.getElementById("panel").innerHTML));
 }
 
 setTimeout(async () => {

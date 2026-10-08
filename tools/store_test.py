@@ -108,7 +108,7 @@ check("сервер поднялся", True)
 check("файл базы создан", os.path.exists(db_path))
 check("ключ создан", os.path.exists(db_path + ".key"))
 
-code, body = request(port, "/api/register", {"username": "vasya",
+code, body = request(port, "/api/register", {"email": "vasya@mail.ru",
                                              "password": "parol123"})
 check("регистрация прошла", code == 201, (code, body))
 token = body.get("token", "")
@@ -131,12 +131,12 @@ if proc.poll() is not None:
     check("сервер поднялся снова", False, log[-400:])
 else:
     check("сервер поднялся снова", True)
-    code, body = request(port, "/api/login", {"username": "vasya",
+    code, body = request(port, "/api/login", {"email": "vasya@mail.ru",
                                                "password": "parol123"})
     check("вход после перезапуска", code == 200, (code, body))
     code, body = request(port, "/api/save", token=body.get("token", ""))
     check("прогресс уцелел", (body.get("save") or {}).get("money") == 12345.6, body)
-    code, body = request(port, "/api/login", {"username": "vasya",
+    code, body = request(port, "/api/login", {"email": "vasya@mail.ru",
                                                "password": "nepravilny"})
     check("неверный пароль отклонён", code == 401, (code, body))
 stop(proc)
@@ -160,7 +160,7 @@ else:
     check("база создалась по паролю", True)
     check("файл ключа не создавался", not os.path.exists(pass_db + ".key"))
     code, body = request(pass_port, "/api/register",
-                         {"username": "petya", "password": "parol456"})
+                         {"email": "petya@mail.ru", "password": "parol456"})
     check("регистрация по паролю", code == 201, (code, body))
     stop(proc)
 
@@ -171,7 +171,7 @@ else:
     else:
         check("база открылась тем же паролем", True)
         code, body = request(pass_port, "/api/login",
-                             {"username": "petya", "password": "parol456"})
+                             {"email": "petya@mail.ru", "password": "parol456"})
         check("аккаунты на месте", code == 200, (code, body))
     stop(proc)
 shutil.rmtree(pass_dir, ignore_errors=True)
@@ -278,6 +278,153 @@ for name in ("a", "b", "c"):
 acc._db = None
 count = acc.db().execute("SELECT COUNT(*) FROM users").fetchone()[0]
 check("после перечитывания все записи на месте", count == 3, count)
+
+print("Почта: письмо с компенсацией")
+mail_dir = tempfile.mkdtemp()
+mail_db = os.path.join(mail_dir, "accounts.db")
+mail_port = free_port()
+proc, log = start(mail_port, mail_db)
+if proc.poll() is not None:
+    check("сервер с почтой поднялся", False, log[-300:])
+else:
+    check("сервер с почтой поднялся", True)
+
+    code, body = request(mail_port, "/api/register",
+                         {"email": "Ivan@Mail.RU", "password": "parol123"})
+    check("регистрация по почте", code == 201, (code, body))
+    check("почта приведена к нижнему регистру",
+          body.get("email") == "ivan@mail.ru", body.get("email"))
+    token = body.get("token", "")
+
+    code, body = request(mail_port, "/api/register",
+                         {"email": "ivan@mail.ru ", "password": "parol123"})
+    check("на одну почту — один аккаунт", code == 409, (code, body))
+    check("и сказано, что делать",
+          "Войти" in body.get("error", ""), body.get("error"))
+
+    code, body = request(mail_port, "/api/register",
+                         {"email": "это-не-почта", "password": "parol123"})
+    check("мусор вместо почты отвергнут", code == 400, (code, body))
+
+    code, body = request(mail_port, "/api/mail", token=token)
+    letters = body.get("letters", [])
+    check("письмо пришло сразу после регистрации", len(letters) == 1, letters)
+    letter = letters[0] if letters else {}
+    check("тема письма",
+          letter.get("subject") == "Компенсация за утраченный прогресс",
+          letter.get("subject"))
+    check("в письме есть текст", len(letter.get("body", "")) > 20, letter.get("body"))
+    check("награда 100 денег", letter.get("reward") == 100.0, letter.get("reward"))
+    check("есть срок", isinstance(letter.get("expires_at"), (int, float)))
+    check("непрочитанных: 1", body.get("unread") == 1, body.get("unread"))
+
+    life = letter.get("expires_at", 0) - letter.get("created_at", 0)
+    check("срок ровно трое суток", abs(life - 3 * 86400) < 0.001, life)
+
+    mail_id = letter.get("id")
+    code, body = request(mail_port, "/api/mail/claim", {"id": mail_id}, token=token)
+    check("награда выдана", code == 200 and body.get("reward") == 100.0, (code, body))
+    code, body = request(mail_port, "/api/mail/claim", {"id": mail_id}, token=token)
+    check("второй раз награду не дают", code == 409, (code, body))
+    code, body = request(mail_port, "/api/mail", token=token)
+    check("после получения непрочитанных 0", body.get("unread") == 0, body.get("unread"))
+
+    # Вход должен работать по почте
+    code, body = request(mail_port, "/api/login",
+                         {"email": "IVAN@MAIL.RU", "password": "parol123"})
+    check("вход по почте в любом регистре", code == 200, (code, body))
+    code, body = request(mail_port, "/api/login",
+                         {"email": "ivan@mail.ru", "password": "неверный"})
+    check("неверный пароль отвергнут", code == 401, (code, body))
+stop(proc)
+
+print("Почта: сгоревшее письмо")
+sys.path.insert(0, os.path.join(ROOT, "server"))
+import account_server as acc  # noqa: E402
+
+acc._db = None
+acc._master_key = None
+acc.DB_PATH = os.path.join(mail_dir, "expiry.db")
+acc.LEGACY_DB_PATH = os.path.join(mail_dir, "нет.db")
+acc._db = acc.open_memory_db()
+acc.commit()
+now = 1_700_000_000.0
+cur = acc._db.execute(
+    "INSERT INTO users (username, email, salt, password, created_at)"
+    " VALUES ('u', 'a@b.ru', ?, ?, ?)", (bytes(16), bytes(32), now))
+user_id = cur.lastrowid
+fresh_id = acc.send_welcome_mail(acc._db, user_id, now)
+old_id = acc.send_welcome_mail(acc._db, user_id, now - 10 * 86400)
+check("письмо живёт трое суток",
+      acc._db.execute("SELECT expires_at - created_at FROM mail WHERE id = ?",
+                      (fresh_id,)).fetchone()[0] == 3 * 86400)
+check("сгоревшее письмо помечается в прошлом",
+      acc._db.execute("SELECT expires_at <= ? FROM mail WHERE id = ?",
+                      (now, old_id)).fetchone()[0] == 1)
+rows = acc._db.execute(
+    "SELECT id FROM mail WHERE user_id = ? AND expires_at > ?",
+    (user_id, now)).fetchall()
+check("живое письмо остаётся", [r[0] for r in rows] == [fresh_id], rows)
+shutil.rmtree(mail_dir, ignore_errors=True)
+
+print("Почта: старая база без колонки email и без таблицы mail")
+import sqlite3 as _sqlite3  # noqa: E402
+
+# База ровно такой схемы, какой она была в 1.2.3–1.2.5: без email и без mail.
+old_conn = _sqlite3.connect(":memory:", check_same_thread=False)
+old_conn.row_factory = _sqlite3.Row
+old_conn.executescript(
+    "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    " username TEXT UNIQUE NOT NULL, salt BLOB NOT NULL, password BLOB NOT NULL,"
+    " created_at REAL NOT NULL, last_seen REAL);"
+    "CREATE TABLE saves (user_id INTEGER PRIMARY KEY, payload TEXT NOT NULL,"
+    " updated_at REAL NOT NULL, bytes INTEGER NOT NULL);"
+    "CREATE TABLE tokens (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL,"
+    " created_at REAL NOT NULL, expires_at REAL NOT NULL);")
+old_conn.execute("INSERT INTO users (username, salt, password, created_at)"
+                 " VALUES ('starosta', ?, ?, 1700000000)",
+                 (bytes(16), bytes(32)))
+old_conn.execute("INSERT INTO saves VALUES (1, '{\"money\": 999.5}', 1700000000, 18)")
+old_conn.commit()
+old_bytes = old_conn.serialize()
+old_conn.close()
+
+acc._db = None
+acc._master_key = None
+acc.DB_PATH = os.path.join(mail_dir, "migrated.db")
+acc._db = acc.open_memory_db()
+acc._db.deserialize(old_bytes)
+before = {row["name"] for row in acc._db.execute("PRAGMA table_info(users)")}
+check("в старой базе колонки email нет", "email" not in before, before)
+tables_before = {row[0] for row in acc._db.execute(
+    "SELECT name FROM sqlite_master WHERE type='table'")}
+
+acc.migrate(acc._db)
+after = {row["name"] for row in acc._db.execute("PRAGMA table_info(users)")}
+check("миграция добавила колонку email", "email" in after, after)
+tables_after = {row[0] for row in acc._db.execute(
+    "SELECT name FROM sqlite_master WHERE type='table'")}
+check("миграция создала таблицу mail", "mail" in tables_after - tables_before,
+      tables_after - tables_before)
+row = acc._db.execute("SELECT id, username, email FROM users").fetchone()
+check("старый аккаунт цел и почта пустая",
+      row["username"] == "starosta" and row["email"] is None, dict(row))
+saved = acc._db.execute("SELECT payload FROM saves").fetchone()
+check("старое сохранение цело", "999.5" in saved["payload"], saved["payload"])
+check("письмо старому аккаунту кладётся",
+      acc.send_welcome_mail(acc._db, row["id"]) > 0)
+# уникальность почты держит индекс, а не колонка
+acc._db.execute("UPDATE users SET email = 'starosta@mail.ru' WHERE id = ?", (row["id"],))
+try:
+    acc._db.execute("INSERT INTO users (username, email, salt, password, created_at)"
+                     " VALUES ('drugoy', 'STAROSTA@mail.ru', ?, ?, 1700000000)",
+                     (bytes(16), bytes(32)))
+    acc._db.commit()
+    check("почта остаётся уникальной", False, "проглотил дубль")
+except _sqlite3.IntegrityError:
+    check("почта остаётся уникальной", True)
+acc._db = None
+acc._master_key = None
 
 shutil.rmtree(folder, ignore_errors=True)
 shutil.rmtree(legacy_dir, ignore_errors=True)

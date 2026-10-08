@@ -6,6 +6,7 @@
 import os
 import re
 import random
+import time
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -436,6 +437,32 @@ def test_settings():
     check("окно скорости выключается", not st.setting("speed_gauge"))
 
 
+def test_mail():
+    print("Почта")
+    cfg = config.MAIL
+    check("награда 100 денег", cfg["reward_money"] == 100.0, cfg["reward_money"])
+    check("срок ровно трое суток",
+          cfg["expires_in_seconds"] == 3 * 86400, cfg["expires_in_seconds"])
+    check("тема письма",
+          cfg["welcome_subject"] == "Компенсация за утраченный прогресс",
+          cfg["welcome_subject"])
+    check("одна почта — один аккаунт", cfg["one_account_per_email"] is True)
+    check("в письме есть текст", len(cfg["welcome_body"]) > 40)
+
+    st = state.GameState(rng=random.Random(9))
+    check("ящик изначально пуст", st.mail == [] and st.mail_unread == 0)
+    before = st.money
+    ok, message = st.claim_mail(1)
+    check("без аккаунта награду не забрать", ok is False, message)
+    check("и деньги не начислились", st.money == before)
+
+    # Письмо, пришедшее на сервер, должно доживать ровно трое суток
+    letter = {"id": 1, "reward": 100.0, "expires_at": time.time() + 86400,
+              "claimed": False}
+    st.mail = [letter]
+    check("письмо попало в ящик", len(st.mail) == 1)
+
+
 def main():
     print("=" * 60)
     print("Math Idle — самопроверка")
@@ -450,6 +477,7 @@ def main():
     test_prestige_shop()
     test_account()
     test_settings()
+    test_mail()
     test_flow()
     test_upgrade_ladder()
     print("=" * 60)

@@ -71,6 +71,8 @@ class GameState:
         self.account = account_mod.AccountClient()
         self.account_token = None
         self.account_username = None
+        self.mail = []            # письма из ящика аккаунта
+        self.mail_unread = 0     # сколько без награды
         self._last_sync = 0.0
         self._last_save = 0.0
         self._clock = 0.0
@@ -600,10 +602,10 @@ class GameState:
     # ------------------------------------------------------------------
     # Аккаунт
     # ------------------------------------------------------------------
-    def sign_in(self, username, password):
+    def sign_in(self, email, password):
         """Вход в аккаунт и загрузка сохранения с сервера."""
         try:
-            self.account.login(username, password)
+            self.account.login(email, password)
         except account_mod.AccountError as exc:
             return False, str(exc)
         self.account_token = self.account.token
@@ -619,16 +621,49 @@ class GameState:
         self.sync_to_server(silent=True)
         return True, "Вход выполнен, создан новый профиль"
 
-    def register(self, username, password):
+    def register(self, email, password):
         try:
-            self.account.register(username, password)
+            self.account.register(email, password)
         except account_mod.AccountError as exc:
             return False, str(exc)
         self.account_token = self.account.token
         self.account_username = self.account.username
         self._last_sync = 0.0
         self.sync_to_server(silent=True)
-        return True, f"Аккаунт «{username}» создан"
+        self.refresh_mail()
+        return True, f"Аккаунт создан. Письмо с компенсацией уже в почте"
+
+    # ------------------------------------------------------------------
+    # Почта
+    # ------------------------------------------------------------------
+    def refresh_mail(self):
+        """Забирает список писем с сервера. Возвращает их и число непрочитанных."""
+        if not self.account.signed_in:
+            self.mail = []
+            self.mail_unread = 0
+            return []
+        try:
+            letters, unread = self.account.mail()
+        except account_mod.AccountError:
+            return self.mail
+        self.mail = letters
+        self.mail_unread = unread
+        return letters
+
+    def claim_mail(self, mail_id):
+        """Забирает награду за письмо и начисляет деньги."""
+        if not self.account.signed_in:
+            return False, "Сначала войди в аккаунт"
+        try:
+            reward = self.account.claim_mail(mail_id)
+        except account_mod.AccountError as exc:
+            return False, str(exc)
+        if reward > 0:
+            self.credit(reward)
+            self.refresh_mail()
+            self.sync_to_server(silent=True)
+            return True, f"Получено {economy.fmt_money(reward)}"
+        return False, "В письме нет награды"
 
     def apply_remote(self, remote):
         """Подставляет сохранение с сервера, сохраняя настройки этого устройства."""

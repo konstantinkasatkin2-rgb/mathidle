@@ -88,7 +88,7 @@ function pause(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     var shown = /Нойдено в сети|айдено в сети/.test(d.querySelector("#panel").innerHTML);
     log("адрес показан в настройках: " + shown, shown);
 
-    d.getElementById("loginName").value = "mob-" + USER;
+    d.getElementById("loginName").value = "mob-" + USER + "@mail.ru";
     d.getElementById("loginPass").value = "parol123";
     d.querySelectorAll(".warn").forEach(function (n) { n.remove(); });
     d.querySelector("[data-register]").click();
@@ -101,12 +101,64 @@ function pause(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
     return;
   }
 
+  if (MODE === "mail") {
+    // Сквозной сценарий: регистрация по почте → письмо с компенсацией →
+    // кнопка «Забрать награду» → деньги пришли.
+    var EMAIL = "igrok-" + Date.now().toString().slice(-6) + "@mail.ru";
+    d.querySelector('[data-tab="settings"]').click();
+    await pause(300);
+    log("поле просит почту: " +
+        (d.getElementById("loginName").type === "email"));
+    d.getElementById("serverUrl").value = URL_;
+    d.getElementById("loginName").value = EMAIL;
+    d.getElementById("loginPass").value = "parol123";
+    d.querySelector("[data-register]").click();
+    var reg = await waitFor(d, 15000);
+    log("регистрация по почте: " + reg, /ВЫХОД ВЫПОЛНЕН/.test(reg));
+
+    var mailTab = d.querySelector('[data-tab="mail"]');
+    log("вкладка «Почта» появилась: " + (mailTab && !mailTab.disabled),
+        !!(mailTab && !mailTab.disabled));
+    mailTab.click();
+    await pause(500);
+    var html = d.querySelector("#panel").innerHTML;
+    log("письмо в ящике: " +
+        /Компенсация за утраченный прогресс/.test(html),
+        /Компенсация за утраченный прогресс/.test(html));
+    log("в письме есть кнопка: " + /Забрать награду/.test(html),
+        /Забрать награду/.test(html));
+
+    var before = d.getElementById("money").textContent;
+    var claim = d.querySelector("[data-claim]");
+    if (!claim) {
+      log("кнопка получения найдена", false);
+    } else {
+      claim.click();
+      await pause(1500);
+      var after2 = d.getElementById("money").textContent;
+      log("деньги после получения: " + before + " -> " + after2,
+          before !== after2);
+      d.querySelector('[data-tab="mail"]').click();
+      await pause(500);
+      var html2 = d.querySelector("#panel").innerHTML;
+      log("после получения кнопки нет: " + !/Забрать награду/.test(html2),
+          !/Забрать награду/.test(html2));
+      log("и стоит отметка о получении: " + /Награда получена/.test(html2),
+          /Награда получена/.test(html2));
+    }
+    var raw2 = /failed to fetch/i.test(out.textContent);
+    log("техническое «Failed to fetch» не показывается: " + !raw2, !raw2);
+    out.className = failures ? "bad" : "ok";
+    document.title = failures ? "ACCOUNT-FAIL" : "ACCOUNT-OK";
+    return;
+  }
+
   d.querySelector('[data-tab="settings"]').click();
   await pause(300);
 
   function fill(name, pass) {
     d.getElementById("serverUrl").value = URL_;
-    d.getElementById("loginName").value = name;
+    d.getElementById("loginName").value = name + "@mail.ru";
     d.getElementById("loginPass").value = pass;
   }
   function click(sel) {
@@ -153,7 +205,7 @@ function pause(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   fill(USER, "parol123");
   click("[data-register]");
   var e4 = await waitFor(d, 12000);
-  log("занятое имя: " + e4, /занят/i.test(e4));
+  log("занятая почта: " + e4, /уже есть аккаунт|занят/i.test(e4));
 
   await signOut();
   // 5. короткий пароль

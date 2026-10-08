@@ -57,7 +57,7 @@ except ImportError:
     # mathidle рядом с ним нет. Нужны всего два значения, поэтому берём их
     # отсюда; чтобы версия не расходилась с игрой, она подставляется при сборке.
     class _Config:
-        GAME = {"version": "1.2.6"}
+        GAME = {"version": "1.2.7"}
         ACCOUNT = {"session_token_days": 30}
 
     config = _Config()
@@ -72,6 +72,53 @@ TOKEN_DAYS = config.ACCOUNT["session_token_days"]
 MAX_SAVE_BYTES = 512 * 1024
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,24}$")
 DISCOVERY_TOKEN = "mathidle"
+# Почта — основной способ регистрации, поэтому проверяем её строже,
+# чем имя: одна почта равна одному аккаунту, и опечатка здесь обернётся
+# потерей доступа к прогрессу навсегда.
+EMAIL_RE = re.compile(
+    r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+@[A-Za-z0-9]"
+    r"(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
+MAIL_LIFETIME = config.MAIL["expires_in_seconds"]
+
+
+def normalize_email(raw):
+    """Приводит почту к единому виду: без пробелов и целиком в нижний регистр.
+
+    « Vasya@Mail.RU » и «vasya@mail.ru» должны считаться одним адресом,
+    иначе правило «одна почта — один аккаунт» обходится регистром.
+    Формально по стандарту часть до @ регистрозависима, но на практике
+    почтовые провайдеры регистр не различают.
+    """
+    return str(raw or "").strip().strip("<>").strip().lower()
+
+
+def valid_email(raw):
+    text = normalize_email(raw)
+    return bool(EMAIL_RE.match(text)) and len(text) <= 254
+
+
+def name_from_email(email):
+    """Имя для показа берём из почты: до @, без цифр в начале."""
+    local = email.split("@", 1)[0]
+    local = re.sub(r"[^A-Za-z0-9_.-]+", "", local)[:20]
+    return local or "player"
+
+
+def mail_expires_at(now=None):
+    """Момент истечения письма: ровно через трое суток от отправки."""
+    return (now if now is not None else time.time()) + MAIL_LIFETIME
+
+
+def send_welcome_mail(conn, user_id, now=None):
+    """Кладёт письмо с компенсацией в ящик игрока."""
+    created = now if now is not None else time.time()
+    cur = conn.execute(
+        "INSERT INTO mail (user_id, subject, body, reward, created_at, expires_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (user_id, config.MAIL["welcome_subject"], config.MAIL["welcome_body"],
+         config.MAIL["reward_money"], created, mail_expires_at(created)))
+    return cur.lastrowid
 
 _lock = threading.Lock()
 _db = None
@@ -103,6 +150,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     username    TEXT UNIQUE NOT NULL,
+    email       TEXT,
     salt        BLOB NOT NULL,
     password    BLOB NOT NULL,
     created_at  REAL NOT NULL,
@@ -120,8 +168,38 @@ CREATE TABLE IF NOT EXISTS tokens (
     created_at  REAL NOT NULL,
     expires_at  REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS mail (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    subject     TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    reward      REAL NOT NULL DEFAULT 0,
+    created_at  REAL NOT NULL,
+    expires_at  REAL NOT NULL,
+    claimed_at  REAL
+);
 CREATE INDEX IF NOT EXISTS idx_tokens_user ON tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_mail_user ON mail(user_id);
+-- Уникальность почты живёт в индексе, а не в самой колонке: SQLite не
+-- умеет добавлять колонку с UNIQUE через ALTER TABLE, а старые базы
+-- приходится доводить на месте. COLLATE NOCASE — иначе база считала бы
+-- Vasya@mail.ru и vasya@mail.ru разными адресами.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email COLLATE NOCASE);
 """
+
+
+def migrate(conn):
+    """Доводит старую базу до текущей схемы.
+
+    У базы 1.2.3–1.2.5 не было колонки email и таблицы mail. База
+    зашифрована и лежит у игрока на диске, поэтому «создать, если нет»
+    мало: колонку в существующей таблице так не добавить.
+    """
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+    if "email" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN email TEXT")
+    conn.executescript(SCHEMA)
+    conn.commit()
 
 
 def open_memory_db():
@@ -198,6 +276,7 @@ def db():
             with open(DB_PATH, "rb") as fh:
                 plain = secret.unseal(fh.read(), master_key())
             _db.deserialize(plain)
+            migrate(_db)
         elif os.path.exists(LEGACY_DB_PATH) and DB_PATH != LEGACY_DB_PATH:
             count = import_legacy(_db, LEGACY_DB_PATH)
             if count:
@@ -373,6 +452,8 @@ class Handler(BaseHTTPRequestHandler):
             self.get_save()
         elif path == "/api/leaderboard":
             self.leaderboard()
+        elif path == "/api/mail":
+            self.get_mail()
         elif path == "/":
             self.send_json(404, {"error": "не найдено"})
         else:
@@ -389,6 +470,8 @@ class Handler(BaseHTTPRequestHandler):
             self.register(data)
         elif path == "/api/login":
             self.login(data)
+        elif path == "/api/mail/claim":
+            self.claim_mail(data)
         else:
             self.send_json(404, {"error": "не найдено"})
 
@@ -401,47 +484,69 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------------- действия ----------------
     def register(self, data):
-        username = str(data.get("username", "")).strip()
+        # Регистрация идёт по почте: на одну почту — один аккаунт.
+        email = normalize_email(data.get("email") or data.get("username", ""))
         password = str(data.get("password", ""))
-        if not USERNAME_RE.match(username):
+        if not valid_email(email):
             self.send_json(400, {
-                "error": "Имя: 3–24 символа, латиница, цифры, «_», «-», «.»"})
+                "error": "Почта не похожа на адрес. Пример: vasya@mail.ru"})
             return
         if len(password) < 6:
             self.send_json(400, {"error": "Пароль минимум 6 символов"})
             return
 
         salt, digest = hash_password(password)
+        username = name_from_email(email)
         now = time.time()
         with _lock:
+            taken = db().execute(
+                "SELECT username FROM users WHERE email = ? OR username = ?",
+                (email, username)).fetchone()
+            if taken:
+                self.send_json(409, {
+                    "error": "На эту почту уже есть аккаунт — попробуй «Войти»"})
+                return
             try:
                 cur = db().execute(
-                    "INSERT INTO users (username, salt, password, created_at, last_seen)"
-                    " VALUES (?, ?, ?, ?, ?)", (username, salt, digest, now, now))
+                    "INSERT INTO users (username, email, salt, password,"
+                    " created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?)",
+                    (username, email, salt, digest, now, now))
                 user_id = cur.lastrowid
             except sqlite3.IntegrityError:
-                self.send_json(409, {"error": "Такое имя уже занято"})
+                self.send_json(409, {
+                    "error": "На эту почту уже есть аккаунт — попробуй «Войти»"})
                 return
             token = new_token()
             db().execute(
                 "INSERT INTO tokens (token, user_id, created_at, expires_at)"
                 " VALUES (?, ?, ?, ?)", (token, user_id, now, token_expiry()))
+            # Письмо с компенсацией уходит сразу после регистрации.
+            mail_id = send_welcome_mail(db(), user_id, now)
             commit()
-        self.send_json(201, {"username": username, "token": token})
+        self.send_json(201, {"username": username, "email": email,
+                             "token": token, "mail_id": mail_id})
 
     def login(self, data):
-        username = str(data.get("username", "")).strip()
+        login = str(data.get("email") or data.get("username", "")).strip()
         password = str(data.get("password", ""))
+        # Войти можно и по почте, и по старому имени: часть аккаунтов
+        # заведена до появления почты.
+        email = normalize_email(login) if "@" in login else None
         with _lock:
-            row = db().execute(
-                "SELECT id, salt, password FROM users WHERE username = ?",
-                (username,)).fetchone()
+            if email:
+                row = db().execute(
+                    "SELECT id, username, email, salt, password FROM users"
+                    " WHERE email = ? OR username = ?", (email, login)).fetchone()
+            else:
+                row = db().execute(
+                    "SELECT id, username, email, salt, password FROM users"
+                    " WHERE username = ?", (login,)).fetchone()
         if not row:
-            self.send_json(401, {"error": "Неверное имя или пароль"})
+            self.send_json(401, {"error": "Неверная почта или пароль"})
             return
         _salt, digest = hash_password(password, bytes(row["salt"]))
         if not hmac.compare_digest(digest, bytes(row["password"])):
-            self.send_json(401, {"error": "Неверное имя или пароль"})
+            self.send_json(401, {"error": "Неверная почта или пароль"})
             return
 
         now = time.time()
@@ -451,8 +556,15 @@ class Handler(BaseHTTPRequestHandler):
             db().execute(
                 "INSERT INTO tokens (token, user_id, created_at, expires_at)"
                 " VALUES (?, ?, ?, ?)", (token, row["id"], now, token_expiry()))
+            # Аккаунтам, заведённым до появления почты, письмо тоже
+            # положим — компенсация им полагается так же.
+            have_mail = db().execute(
+                "SELECT 1 FROM mail WHERE user_id = ? LIMIT 1", (row["id"],)).fetchone()
+            if not have_mail:
+                send_welcome_mail(db(), row["id"], now)
             commit()
-        self.send_json(200, {"username": username, "token": token})
+        self.send_json(200, {"username": row["username"],
+                             "email": row["email"], "token": token})
 
     def get_save(self):
         user = self.require_user()
@@ -500,6 +612,64 @@ class Handler(BaseHTTPRequestHandler):
                 (user["id"], payload, now, len(payload.encode("utf-8"))))
             commit()
         self.send_json(200, {"ok": True, "updated_at": now})
+
+    def get_mail(self):
+        """Письма игрока. Просроченные не показываем и убираем."""
+        user = self.require_user()
+        if not user:
+            return
+        now = time.time()
+        with _lock:
+            expired = db().execute("DELETE FROM mail WHERE expires_at <= ?", (now,))
+            if expired.rowcount:
+                commit()
+            rows = db().execute(
+                "SELECT id, subject, body, reward, created_at, expires_at, claimed_at"
+                " FROM mail WHERE user_id = ? ORDER BY created_at DESC",
+                (user["id"],)).fetchall()
+        letters = [{
+            "id": row["id"],
+            "subject": row["subject"],
+            "body": row["body"],
+            "reward": row["reward"],
+            "created_at": row["created_at"],
+            "expires_at": row["expires_at"],
+            "claimed": row["claimed_at"] is not None,
+        } for row in rows]
+        unread = sum(1 for letter in letters if not letter["claimed"])
+        self.send_json(200, {"letters": letters, "unread": unread,
+                             "server_time": now})
+
+    def claim_mail(self, data):
+        """Забирает награду за письмо. Второй раз — уже нельзя."""
+        user = self.require_user()
+        if not user:
+            return
+        try:
+            mail_id = int(data.get("id"))
+        except (TypeError, ValueError):
+            self.send_json(400, {"error": "не указано письмо"})
+            return
+
+        now = time.time()
+        with _lock:
+            row = db().execute(
+                "SELECT id, reward, expires_at, claimed_at FROM mail"
+                " WHERE id = ? AND user_id = ?", (mail_id, user["id"])).fetchone()
+            if not row:
+                self.send_json(404, {"error": "письмо не найдено"})
+                return
+            if row["claimed_at"] is not None:
+                self.send_json(409, {"error": "награда уже получена"})
+                return
+            if row["expires_at"] <= now:
+                db().execute("DELETE FROM mail WHERE id = ?", (mail_id,))
+                commit()
+                self.send_json(410, {"error": "письмо сгорело"})
+                return
+            db().execute("UPDATE mail SET claimed_at = ? WHERE id = ?", (now, mail_id))
+            commit()
+        self.send_json(200, {"ok": True, "reward": row["reward"], "id": mail_id})
 
     def leaderboard(self):
         query = ("SELECT u.username, s.updated_at, s.bytes, "

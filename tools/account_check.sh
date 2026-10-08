@@ -62,10 +62,11 @@ sleep 3
 
 echo "== проверка аккаунтов в $(basename "$CHROME") =="
 STATUS=0
-for MODE in up native down; do
+for MODE in up mail native down; do
   # в сценарии down указываем заведомо закрытый порт: сервер не отвечает
   case "$MODE" in
     up)     TARGET_PORT="$PORT" ;;
+    mail)   TARGET_PORT="$PORT" ;;
     native) TARGET_PORT="$PORT" ;;
     down)
       if [ -n "$SKIP_DOWN" ]; then

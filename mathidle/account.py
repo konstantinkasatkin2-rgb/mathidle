@@ -86,6 +86,7 @@ class AccountClient:
     def __init__(self, url=None):
         self.url = url
         self.username = None
+        self.email = None
         self.token = None
         self.last_error = None
 
@@ -132,26 +133,52 @@ class AccountClient:
 
     # ------------------------------------------------------------------
     def ping(self):
-        """Сервер отвечает?"""
-        return bool(self._try_urls("/api/health"))
+        """Сервер отвечает?
 
-    def register(self, username, password):
+        Это проверка, а не действие: она вызывается при каждой отрисовке
+        панели, поэтому молча отвечает False, а не кидает исключение.
+        """
+        try:
+            self._try_urls("/api/health")
+            return True
+        except AccountError:
+            return False
+
+    def register(self, email, password):
+        """Регистрация по почте: на одну почту — один аккаунт."""
         data = self._try_urls("/api/register", method="POST",
-                              payload={"username": username, "password": password})
-        self.username = data.get("username", username)
+                              payload={"email": email, "password": password})
+        self.username = data.get("username", "")
+        self.email = data.get("email", email)
         self.token = data.get("token")
         return self
 
-    def login(self, username, password):
+    def login(self, email, password):
         data = self._try_urls("/api/login", method="POST",
-                              payload={"username": username, "password": password})
-        self.username = data.get("username", username)
+                              payload={"email": email, "password": password})
+        self.username = data.get("username", "")
+        self.email = data.get("email", "")
         self.token = data.get("token")
         return self
 
     def logout(self):
         self.username = None
+        self.email = None
         self.token = None
+
+    # ------------------------------------------------------------------
+    # Почта
+    # ------------------------------------------------------------------
+    def mail(self):
+        """Письма игрока и срок их жизни (считает сервер)."""
+        data = self._try_urls("/api/mail", token=self.token)
+        return data.get("letters", []), data.get("unread", 0)
+
+    def claim_mail(self, mail_id):
+        """Забирает награду за письмо. Второй раз сервер не даст."""
+        data = self._try_urls("/api/mail/claim", method="POST", token=self.token,
+                              payload={"id": mail_id})
+        return data.get("reward", 0.0)
 
     def download_save(self):
         """Сохранение с аккаунта (или None, если его ещё нет)."""

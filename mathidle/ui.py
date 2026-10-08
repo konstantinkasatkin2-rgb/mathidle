@@ -1117,12 +1117,18 @@ class GameUI:
             btn.action = self.do_sign_out
             btn.draw(canvas, self.fonts)
             self._pending.append(btn)
+            y += 56
+            self.draw_mail(canvas, small, body, rect, y)
             canvas.set_clip(None)
             return
 
         canvas.blit(
             small.render("Войди, чтобы прогресс хранился на сервере, а не на устройстве",
                          True, MUTED), (rect.x + 4, y))
+        y += 20
+        canvas.blit(
+            small.render("На одну почту — один аккаунт", True, MUTED),
+            (rect.x + 4, y))
         y += 24
         if st.account.last_error:
             canvas.blit(small.render("сервер: " + st.account.last_error[:70], True, RED),
@@ -1151,7 +1157,7 @@ class GameUI:
         pygame.draw.rect(canvas, LINE, name_rect, width=2, border_radius=8)
         pygame.draw.rect(canvas, BG, pass_rect, border_radius=8)
         pygame.draw.rect(canvas, LINE, pass_rect, width=2, border_radius=8)
-        canvas.blit(body.render(self._login_name or "имя игрока",
+        canvas.blit(body.render(self._login_name or "почта: vasya@mail.ru",
                                 True, TEXT if self._login_name else MUTED),
                     (name_rect.x + 10, name_rect.y + 11))
         pass_text = "•" * len(self._login_pass) if self._login_pass else "пароль"
@@ -1168,6 +1174,65 @@ class GameUI:
         btn.draw(canvas, self.fonts)
         self._pending.append(btn)
         canvas.set_clip(None)
+
+    @staticmethod
+    def _left_text(seconds):
+        """Сколько осталось жить письму: по-человечески, а не в секундах."""
+        seconds = max(0, int(seconds))
+        if seconds < 3600:
+            return f"{max(1, seconds // 60)} мин"
+        if seconds < 86400:
+            return f"{seconds // 3600} ч"
+        return f"{seconds // 86400} дн {(seconds % 86400) // 3600} ч"
+
+    def draw_mail(self, canvas, small, body, rect, y):
+        """Ящик аккаунта: письма и кнопка получения награды."""
+        st = self.state
+        canvas.blit(body.render("Почта", True, TEXT), (rect.x + 4, y))
+        y += 26
+
+        st.refresh_mail()
+        letters = st.mail
+        if not letters:
+            canvas.blit(small.render("Писем нет", True, MUTED), (rect.x + 4, y))
+            return
+
+        for letter in letters:
+            left = letter["expires_at"] - time.time()
+            claimed = letter["claimed"]
+            title = letter["subject"]
+            canvas.blit(body.render(title, True, GOLD if not claimed else TEXT),
+                        (rect.x + 4, y))
+            y += 22
+            reward = economy.fmt_money(letter["reward"])
+            if claimed:
+                canvas.blit(small.render(f"Награда {reward} получена", True, GREEN),
+                            (rect.x + 4, y))
+                y += 20
+            elif left <= 0:
+                canvas.blit(small.render("Письмо сгорело", True, RED),
+                            (rect.x + 4, y))
+                y += 20
+            else:
+                canvas.blit(
+                    small.render(f"Награда {reward} · сгорит через {_left_text(left)}",
+                                 True, MUTED), (rect.x + 4, y))
+                y += 24
+                btn = Button(pygame.Rect(rect.x, y, 240, 40), "Забрать награду",
+                             "", GOLD, True)
+                btn.action = lambda i=letter["id"]: self.do_claim_mail(i)
+                btn.draw(canvas, self.fonts)
+                self._pending.append(btn)
+                y += 48
+            y += 8
+            if y > rect.bottom - 60:
+                break
+
+    def do_claim_mail(self, mail_id):
+        ok, message = self.state.claim_mail(mail_id)
+        self._account_error = "" if ok else message
+        if ok:
+            self.state.log(message, "unlock")
 
     def toggle_setting(self, setting_id):
         st = self.state
