@@ -370,6 +370,7 @@
       if (window.MathIdleNative && typeof window.MathIdleNative.findServers === "function") {
         window.MathIdleNativeServers = function (urls) {
           self.discovered = urls || [];
+          searching = false;
           if (self.discovered.length && !state.serverUrl) {
             // запоминаем находку, чтобы не искать каждый раз
             state.serverUrl = self.discovered[0];
@@ -1041,6 +1042,7 @@
     var floaters = [];
     var eggDismissed = false;
     var loginName = "", loginPass = "", accountError = "", syncPassDraft = "";
+var searching = false;      // идёт ли поиск сервера в сети
 
     var KIND_COLORS = {
       buy: "var(--accent)", unlock: "var(--gold)", pass: "var(--green)",
@@ -1410,7 +1412,7 @@
       // Честное предупреждение: местный аккаунт исчезнет вместе с
       // приложением, и войти будет некуда. Об этом лучше сказать прямо.
       if (state.localEmail && !state.localSynced && !account.signedIn()) {
-        out += '<div class="warn">Прогресс лежит только на этом устройстве. ' +
+        out += '<div class="notice">Прогресс лежит только на этом устройстве. ' +
           "Удалите приложение или его данные — и он пропадёт навсегда: " +
           "восстановить будет нечем. Чтобы подстраховаться, перенесите " +
           "аккаунт на сервер — кнопка в настройках.</div>";
@@ -1562,16 +1564,24 @@
         : "";
       var hint = account.discovered.length
         ? "Найден сам, можно просто нажать «Регистрация»"
-        : (window.MathIdleNative
-            ? "Ищу сервер в сети… запусти его на компьютере: bash tools/serve_accounts.sh"
-            : "Укажи адрес компьютера, где запущен сервер");
+        : (searching
+            ? "Ищу сервер в сети…"
+            : (window.MathIdleNative
+                ? "Сервер не найден. Запусти его на компьютере и нажми «Искать ещё раз»"
+                : "Укажи адрес компьютера, где запущен сервер"));
+      var again = window.MathIdleNative
+        ? '<button class="small-btn" data-find-servers="1">Искать сервер ещё раз</button>'
+        : "";
       return '<label class="small field-label">Адрес сервера аккаунтов' +
         (secure ? " (нужен https://)" : "") + "</label>" +
         '<input id="serverUrl" class="full-input" type="text" ' +
         'placeholder="http://192.168.1.10:8766" value="' +
         escapeHtml(state.serverUrl) + '" spellcheck="false">' +
         '<div class="small" style="margin-top:4px">' + hint + "</div>" +
-        found +
+        found + again +
+        '<div class="small" style="margin-top:6px">Сервер доступен из любой точки, ' +
+        "где установлен Tailscale на обоих устройствах: адрес будет вида " +
+        "http://100.x.y.z:8766</div>" +
         '<button class="small-btn" data-save-url="1">Сохранить адрес</button>';
     }
 
@@ -1716,6 +1726,13 @@
       });
       bind("[data-sync-local]", function () {
         return function () { doSyncLocal(); };
+      });
+      bind("[data-find-servers]", function () {
+        return function () {
+          searching = true;
+          account.discover();
+          renderAll();
+        };
       });
     }
 
