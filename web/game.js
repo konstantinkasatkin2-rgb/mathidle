@@ -702,6 +702,9 @@
 
   // ------------------------------------------------------------- престиж
   function prestigeUnlocked() {
+    // Пока в балансе стоит open_from_start, требование «реши пример
+    // сложности 100%» снято: престиж открыт с самого начала.
+    if (P.open_from_start) return true;
     return state.maxDifficulty >= P.required_difficulty;
   }
 
@@ -1397,9 +1400,12 @@ var showServerField = false; // показано ли поле адреса вр
         line("Набежит за этот забег", "+" + fmtMoney(pendingPrestigePoints())) +
         line("Курс", "1 деньга = " + P.points_per_money + " очка") +
         '<div class="rules">' +
-        (state.maxDifficulty >= P.required_difficulty
-          ? "[x] Пример сложности 100% решён"
-          : "[ ] Нужен пример сложности 100% (сейчас " + Math.round(state.maxDifficulty * 100) + "%)") +
+        (P.open_from_start
+          ? "[x] Престиж открыт сразу, требование по сложности снято"
+          : (state.maxDifficulty >= P.required_difficulty
+              ? "[x] Пример сложности 100% решён"
+              : "[ ] Нужен пример сложности 100% (сейчас " +
+                Math.round(state.maxDifficulty * 100) + "%)")) +
         "<br>[x] Заработано в этом забеге: " + fmtMoney(state.runEarned) +
         "<br><br>Престиж обнуляет: деньги, обычные улучшения, контрольные улучшения и " +
         "вознесения. Открытые операции остаются.</div>" +

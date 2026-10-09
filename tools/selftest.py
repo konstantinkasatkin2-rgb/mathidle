@@ -367,7 +367,11 @@ def test_prestige():
 
     # после престижа всё начинается заново
     check("сложность сброшена", st.max_difficulty_solved == 0.0, st.max_difficulty_solved)
-    check("престиж снова закрыт", not st.prestige_unlocked())
+    # Пока open_from_start, престиж остаётся открытым после сброса: снять
+    # требование — значит снять его совсем. С обычным правилом (false)
+    # престиж закрылся бы снова до 100% сложности.
+    check("престиж открыт и после сброса сложности",
+          st.prestige_unlocked() == bool(config.PRESTIGE["open_from_start"]))
     check("номер контрольной сброшен", st.test_level == 1, st.test_level)
     check("счётчик сданных контрольных сброшен", st.tests_passed == 0, st.tests_passed)
     exam = [t for t in config.TEST_TYPES if t["id"] == "exam"][0]

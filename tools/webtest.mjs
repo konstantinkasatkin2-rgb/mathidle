@@ -472,7 +472,11 @@ setTimeout(async () => {
   click('[data-tab="shop"]');
   check("магазин закрыт до сдачи контрольной", !$('[data-grade]'));
   click('[data-tab="prestige"]');
-  check("вкладка престижа закрыта до 100% сложности", !$('[data-prestige="1"]:not([disabled])'));
+  // Пока в балансе open_from_start, престиж открыт сразу. С обычным
+  // правилом (false) вкладка закрывалась бы до примера сложности 100%.
+  check("престиж открыт с самого начала, как и просит баланс",
+    !doc.querySelector('[data-tab="prestige"]').disabled
+      === !!window.MATHIDLE_BALANCE.prestige.open_from_start);
   click('[data-tab="settings"]');
   check("вкладка настроек открылась", !!$('[data-setting="speed_gauge"]'));
   click('[data-tab="upgrades"]');
