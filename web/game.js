@@ -735,6 +735,18 @@
     state.test = null;
     state.current = null;
 
+    // Контрольные и сложность начинаются заново: после престижа их надо
+    // проходить заново, иначе престиж можно было бы «застрять» на одном
+    // и том же уровне навсегда. В настольной версии это есть, а здесь
+    // блок забыли — из-за чего престиж ничего не сбрасывал.
+    if (P.reset_tests) {
+      state.testLevel = 1;
+      state.testsPassed = 0;
+    }
+    if (P.reset_difficulty) {
+      state.maxDifficulty = 0;
+    }
+
     if (state.prestigeCount === 1 && P.unlock_mixed_on_first &&
         state.ops.indexOf("mix") < 0) {
       state.ops.push("mix");
@@ -742,6 +754,9 @@
     }
     ui.log("Престиж! +" + fmtMoney(gained) + " очков престижа (престиж #" +
             state.prestigeCount + ")", "pass");
+    if (P.reset_tests || P.reset_difficulty) {
+      ui.log("Контрольные и сложность сброшены — начинаем заново", "test");
+    }
     nextProblem();
     return true;
   }

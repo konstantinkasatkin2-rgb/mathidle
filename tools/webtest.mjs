@@ -248,6 +248,43 @@ async function phase2() {
     d3.getElementById("log").textContent.includes("заработали"),
     d3.getElementById("log").textContent.trim());
 
+  // Престиж обязан сбрасывать контрольные и сложность. В настольной версии
+  // он это делал, а в веб-порте блок сброса забыли: престиж давал очки и
+  // обнулял улучшения, но контрольные и сложность оставались. Паритет
+  // молчал — он сверяет вычисленные значения, а не состояние после
+  // престижа, поэтому расхождение прошло незамеченным.
+  //
+  // Проверяем по самому сохранению, а не по надписям: надпись на кнопке
+  // «Начать» — это цена, она от уровня контрольной не зависит, и проверка
+  // на ней проходила бы и со сломанным сбросом.
+  {
+    const { w: pw2, d: pd2 } = await makeGame(Object.assign({}, SAVE_BASE, {
+      money: 1000,
+      run_earned: 500,
+      max_difficulty_solved: 1.0,
+      test_level: 3,
+      tests_passed: 4,
+    }));
+    const q = (sel) => pd2.querySelector(sel);
+    q('[data-tab="prestige"]').click();
+    const btn = q('[data-prestige="1"]');
+    check("престиж доступен при 100% сложности", !!btn && !btn.disabled);
+    if (btn && !btn.disabled) {
+      btn.click();
+      // Игра пишет файл раз в 15 секунд, поэтому и ждём: раньше состояние
+      // живёт только в памяти.
+      await new Promise((r) => setTimeout(r, 16000));
+      const save = JSON.parse(pw2.localStorage.getItem("mathidle.save") || "{}");
+      check("престиж сохранён", save.prestige_count === 1, save.prestige_count);
+      check("престиж обнулил сложность", save.max_difficulty_solved === 0,
+        save.max_difficulty_solved);
+      check("престиж вернул первую контрольную", save.test_level === 1,
+        save.test_level);
+      check("престиж обнулил сданные контрольные", save.tests_passed === 0,
+        save.tests_passed);
+    }
+  }
+
   console.log("=".repeat(58));
   if (errors.length) {
     console.log("Ошибки в консоли (" + errors.length + "):");
