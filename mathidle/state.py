@@ -340,6 +340,12 @@ class GameState:
             self.tests_passed = 0
         if config.PRESTIGE["reset_difficulty"]:
             self.max_difficulty_solved = 0.0
+        if config.PRESTIGE["reset_ascensions"]:
+            # Вознесения обычных улучшений обнуляются вместе с ними:
+            # ×2 к скорости и ×4 к цене относятся к текущему кругу, а не
+            # к игроку навсегда.
+            for up in config.BASE_UPGRADES:
+                self.ascensions[up["id"]] = 0
 
         if (self.prestige_count == 1
                 and config.PRESTIGE["unlock_mixed_on_first"]
@@ -351,8 +357,10 @@ class GameState:
             f"Престиж! +{economy.fmt_money(gained)} очков престижа "
             f"(престиж #{self.prestige_count})", "pass"
         )
-        if config.PRESTIGE["reset_tests"] or config.PRESTIGE["reset_difficulty"]:
-            self.log("Контрольные и сложность сброшены — начинаем заново", "test")
+        if (config.PRESTIGE["reset_tests"] or config.PRESTIGE["reset_difficulty"]
+                or config.PRESTIGE["reset_ascensions"]):
+            self.log("Контрольные, сложность и вознесения сброшены — "
+                     "начинаем заново", "test")
         self.next_problem()
         return True, f"Престиж #{self.prestige_count}: +{economy.fmt_money(gained)} очк."
 

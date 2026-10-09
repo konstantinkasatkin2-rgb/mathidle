@@ -746,6 +746,11 @@
     if (P.reset_difficulty) {
       state.maxDifficulty = 0;
     }
+    if (P.reset_ascensions) {
+      // Вознесения обнуляются вместе с улучшениями: ×2 к скорости и ×4
+      // к цене относятся к текущему кругу, а не к игроку навсегда.
+      B.base_upgrades.forEach(function (up) { state.ascensions[up.id] = 0; });
+    }
 
     if (state.prestigeCount === 1 && P.unlock_mixed_on_first &&
         state.ops.indexOf("mix") < 0) {
@@ -754,8 +759,8 @@
     }
     ui.log("Престиж! +" + fmtMoney(gained) + " очков престижа (престиж #" +
             state.prestigeCount + ")", "pass");
-    if (P.reset_tests || P.reset_difficulty) {
-      ui.log("Контрольные и сложность сброшены — начинаем заново", "test");
+    if (P.reset_tests || P.reset_difficulty || P.reset_ascensions) {
+      ui.log("Контрольные, сложность и вознесения сброшены — начинаем заново", "test");
     }
     nextProblem();
     return true;

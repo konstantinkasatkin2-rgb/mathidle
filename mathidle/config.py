@@ -299,6 +299,7 @@ PRESTIGE = {
     "keep_operations": True,      # открытые действия остаются
     "reset_tests": True,          # контрольные сбрасываются к первой
     "reset_difficulty": True,     # лучшая решённая сложность обнуляется
+    "reset_ascensions": True,     # вознесения обычных улучшений обнуляются
     "unlock_mixed_on_first": True,  # первый престиж открывает смешанные примеры
 }
 
@@ -532,7 +533,7 @@ OFFLINE = {
 GAME = {
     "title": "Math Idle",
     "subtitle": "Решай примеры. Копи деньги. Скушай математику.",
-    "version": "1.2.14",
+    "version": "1.2.15",
     "window": [1280, 760],
     "autosave_seconds": 5.0,
     "font": "assets/fonts/Roboto-Regular.ttf",

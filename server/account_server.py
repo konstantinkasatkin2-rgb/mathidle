@@ -57,7 +57,7 @@ except ImportError:
     # mathidle рядом с ним нет. Нужны всего два значения, поэтому берём их
     # отсюда; чтобы версия не расходилась с игрой, она подставляется при сборке.
     class _Config:
-        GAME = {"version": "1.2.14"}
+        GAME = {"version": "1.2.15"}
         ACCOUNT = {"session_token_days": 30}
 
     config = _Config()
