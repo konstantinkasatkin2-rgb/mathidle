@@ -289,13 +289,7 @@ class GameState:
         return self.prestige_count >= 1
 
     def prestige_unlocked(self):
-        """Престиж доступен, когда решён пример сложности 100%.
-
-        Пока в балансе стоит open_from_start, требование снято: престиж
-        открыт с самого начала.
-        """
-        if config.PRESTIGE["open_from_start"]:
-            return True
+        """Престиж доступен, когда решён пример сложности 100%."""
         return self.max_difficulty_solved >= config.PRESTIGE["required_difficulty"]
 
     def prestige_blocked_reason(self):

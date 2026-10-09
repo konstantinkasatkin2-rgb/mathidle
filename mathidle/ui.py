@@ -1083,16 +1083,10 @@ class GameUI:
     def _prestige_requirements(self, st):
         """Требования престижа с отметками выполнения."""
         need = config.PRESTIGE["required_difficulty"]
-        if config.PRESTIGE["open_from_start"]:
-            # Требование по сложности снято: писать про 100% игроку незачем,
-            # он только решит, что престиж почему-то не работает.
-            first = ("Престиж открыт сразу, требование по сложности снято", True)
-        else:
-            first = (f"Решить пример сложности {int(need * 100)}% "
-                     f"(сейчас {int(st.max_difficulty_solved * 100)}%)",
-                     st.max_difficulty_solved >= need)
         return [
-            first,
+            (f"Решить пример сложности {int(need * 100)}% "
+             f"(сейчас {int(st.max_difficulty_solved * 100)}%)",
+             st.max_difficulty_solved >= need),
             (f"Заработать деньги в этом забеге ({economy.fmt_money(st.run_earned)})",
              st.run_earned > 0),
         ]
